@@ -5,12 +5,23 @@ on:
     # Tous les lundis à 05h00 UTC (06h/07h heure de Paris)
     - cron: "0 5 * * 1"
   workflow_dispatch:
+  push:
+    branches: [main]
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: veille
+  cancel-in-progress: false
 
 jobs:
   veille:
+    # Sur un push (modif de sources, de scripts…), on ne relance pas le scraping,
+    # on redéploie seulement le dashboard existant.
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,19 +34,35 @@ jobs:
         run: python3 scripts/funding_watch.py --mark-seen --min-score 18 --max-detail 250
 
       - name: Générer le dashboard
-        run: |
-          python3 scripts/build_dashboard.py
-          mkdir -p docs
-          cp dashboard/index.html docs/index.html
+        run: python3 scripts/build_dashboard.py
 
       - name: Publier les résultats
         run: |
           git config user.name "veille-bot"
           git config user.email "veille-bot@users.noreply.github.com"
-          git add outputs/ dashboard/ docs/ data/
+          git add outputs/ dashboard/ data/
           if git diff --cached --quiet; then
             echo "Aucun changement à publier."
           else
             git commit -m "Veille du $(date -u +%Y-%m-%d)"
             git push
           fi
+
+  deploy:
+    needs: veille
+    if: always() && !cancelled() && (needs.veille.result == 'success' || needs.veille.result == 'skipped')
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dashboard/
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
