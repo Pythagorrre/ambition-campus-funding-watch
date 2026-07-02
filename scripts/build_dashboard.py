@@ -1,0 +1,937 @@
+#!/usr/bin/env python3
+"""Build a self-contained local HTML dashboard for Ambition Campus funding watch."""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import html
+import json
+import re
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date, datetime
+from pathlib import Path
+from statistics import mean
+from typing import Any
+from urllib.parse import quote, urljoin
+from urllib.request import Request, urlopen
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+OUTPUT_DIR = BASE_DIR / "outputs"
+DASHBOARD_DIR = BASE_DIR / "dashboard"
+
+USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126 Safari/537.36"
+MONTHS_FR = [
+    "janvier", "février", "mars", "avril", "mai", "juin",
+    "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+]
+DEADLINE_CUES = [
+    "date limite de dépôt des dossiers", "date limite", "limite de dépôt",
+    "dépôt des demandes ouvert", "dépôt des candidatures", "clôture", "candidature",
+    "candidatures", "jusqu'au", "jusqu’au", "avant le", "deadline",
+]
+STOP_AFTER_CUES = [
+    "Pour en savoir plus", "Partager", "Copier", "Votre avis nous intéresse",
+    "Comité de sélection", "Vote en conseil", "Prochaine session", "Pour toute question",
+    "Ces informations vous", "Restez connecté", "Formulaire",
+]
+WORD_RE = re.compile(r"[0-9A-Za-zÀ-ÖØ-öø-ÿ][0-9A-Za-zÀ-ÖØ-öø-ÿ’'/-]*")
+MONEY_RE = re.compile(
+    r"(?:\b\d{1,3}(?:[\s\u00a0.]\d{3})*(?:[,.]\d+)?\s*(?:€|euros?\b)|\b\d+(?:[,.]\d+)?\s*%)",
+    re.I,
+)
+AMOUNT_LABEL_RE = re.compile(
+    r"\b(?:Montant(?:\s+de\s+l[’']aide)?|Aide(?:\s+régionale)?|Subvention|Dotation|Prix|Financement|Budget|Plafond(?:\s+de\s+l[’']aide)?|Taux\s+d[’']intervention)\s*:\s*",
+    re.I,
+)
+AMOUNT_STOP_RE = re.compile(
+    r"\b(?:Date\s+limite|Domaine\s+d[’']action|Type\s+de\s+projet|Bailleur|Public|Bénéficiaires|Éligibilité|Eligibilité|Critères|Modalités|Calendrier|Candidature|Contact|Pour\s+plus\s+d[’']informations|Partager|Description|Documents|Règlement|Conditions)\s*:?",
+    re.I,
+)
+
+
+def latest_csv() -> Path:
+    files = sorted(OUTPUT_DIR.glob("*_opportunities.csv"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not files:
+        raise FileNotFoundError(f"No opportunity CSV found in {OUTPUT_DIR}")
+    return files[0]
+
+
+def read_rows(path: Path) -> list[dict[str, Any]]:
+    with path.open(newline="", encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    for row in rows:
+        try:
+            row["score_num"] = int(float(row.get("score") or 0))
+        except ValueError:
+            row["score_num"] = 0
+        row["themes_list"] = [t.strip() for t in (row.get("themes") or "").split(";") if t.strip()]
+        parsed_deadline = deadline_date_from_text(row.get("deadline", ""))
+        if parsed_deadline:
+            row["deadline_date"] = parsed_deadline
+    enrich_source_details(rows)
+    return rows
+
+
+MONTH_MAP_FR = {m: i + 1 for i, m in enumerate(MONTHS_FR)}
+MONTH_MAP_FR.update({"fevrier": 2, "aout": 8, "decembre": 12})
+FRENCH_DATE_RE = re.compile(
+    r"(?:lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)?\s*(\d{1,2})\s+"
+    r"(janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)\s+"
+    r"(\d{4})",
+    re.I,
+)
+
+
+def clean_space(text: str) -> str:
+    return re.sub(r"\s+", " ", html.unescape(text or "")).strip()
+
+
+def html_to_text(doc: str) -> str:
+    doc = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", doc)
+    doc = re.sub(r"(?s)<[^>]+>", " ", doc)
+    return clean_space(doc)
+
+
+def fetch_page_html(url: str, timeout: int = 7) -> str:
+    req = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"})
+    with urlopen(req, timeout=timeout) as response:
+        raw = response.read(1_500_000)
+        content_type = response.headers.get("Content-Type", "")
+        charset_match = re.search(r"charset=([\w.-]+)", content_type, re.I)
+        charset = charset_match.group(1) if charset_match else "utf-8"
+        return raw.decode(charset, "replace")
+
+
+def fetch_page_text(url: str, timeout: int = 7) -> str:
+    return html_to_text(fetch_page_html(url, timeout=timeout))
+
+
+def normalize(text: str) -> str:
+    text = html.unescape(text or "").lower()
+    trans = str.maketrans({
+        "à": "a", "â": "a", "ä": "a", "á": "a", "ã": "a", "å": "a",
+        "ç": "c",
+        "é": "e", "è": "e", "ê": "e", "ë": "e",
+        "î": "i", "ï": "i", "í": "i", "ì": "i",
+        "ô": "o", "ö": "o", "ó": "o", "ò": "o", "õ": "o",
+        "ù": "u", "û": "u", "ü": "u", "ú": "u",
+        "ÿ": "y", "ñ": "n", "œ": "oe", "æ": "ae",
+    })
+    text = text.translate(trans)
+    text = re.sub(r"[^a-z0-9€]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def deadline_date_from_text(text: str) -> str:
+    text = clean_space(text)
+    if not text or not any(normalize(cue) in normalize(text) for cue in DEADLINE_CUES):
+        return ""
+    match = FRENCH_DATE_RE.search(text)
+    if not match:
+        return ""
+    day = int(match.group(1))
+    month_key = normalize(match.group(2))
+    month = MONTH_MAP_FR.get(month_key)
+    year = int(match.group(3))
+    if not month:
+        return ""
+    try:
+        return date(year, month, day).isoformat()
+    except ValueError:
+        return ""
+
+
+def deadline_date_variants(value: str) -> list[str]:
+    if not value:
+        return []
+    try:
+        d = date.fromisoformat(value)
+    except ValueError:
+        return [value]
+    month = MONTHS_FR[d.month - 1]
+    return [
+        f"{d.day} {month} {d.year}",
+        f"{d.day:02d} {month} {d.year}",
+        f"{d.day:02d}/{d.month:02d}/{d.year}",
+        f"{d.day}/{d.month}/{d.year}",
+        f"{d.day:02d}-{d.month:02d}-{d.year}",
+        f"{d.year}-{d.month:02d}-{d.day:02d}",
+    ]
+
+
+def occurrences(text: str, needle: str) -> list[tuple[int, int]]:
+    if not needle:
+        return []
+    spans: list[tuple[int, int]] = []
+    pattern = re.compile(re.escape(needle), re.I)
+    for match in pattern.finditer(text):
+        spans.append(match.span())
+    return spans
+
+
+def relevance_tokens(row: dict[str, Any]) -> list[str]:
+    stop = {
+        "appel", "appels", "projet", "projets", "date", "limite", "depot", "dossiers",
+        "candidature", "candidatures", "jusqu", "avant", "deadline", "ouvert", "ouverte",
+        "ville", "paris", "region", "ile", "france", "associations", "gouv", "pages",
+    }
+    source = f"{row.get('titre', '')} {row.get('deadline', '')}"
+    tokens = []
+    for token in re.findall(r"[a-z0-9]{4,}", normalize(source)):
+        if token not in stop:
+            tokens.append(token)
+    return list(dict.fromkeys(tokens))[:16]
+
+
+def phrase_from_words(text: str, max_words: int, *, tail: bool = False) -> str:
+    matches = list(WORD_RE.finditer(text))
+    if not matches:
+        return clean_space(text[:90])
+    chosen = matches[-max_words:] if tail else matches[:max_words]
+    return clean_space(text[chosen[0].start():chosen[-1].end()])
+
+
+def best_deadline_span(row: dict[str, Any], text: str) -> tuple[int, int] | None:
+    date_needles = deadline_date_variants(row.get("deadline_date", ""))
+    deadline = clean_space(row.get("deadline", ""))
+
+    def collect_candidates(needles: list[str]) -> list[tuple[int, int, int]]:
+        found: list[tuple[int, int, int]] = []
+        norm_tokens = relevance_tokens(row)
+        for needle in dict.fromkeys(n for n in needles if n):
+            for start, end in occurrences(text, needle):
+                window = text[max(0, start - 260):min(len(text), end + 420)]
+                norm_window = normalize(window)
+                score = sum(1 for token in norm_tokens if token in norm_window)
+                score += 3 if any(normalize(cue) in norm_window for cue in DEADLINE_CUES) else 0
+                found.append((score, start, end))
+        return found
+
+    # Prefer actual parsed dates. Only fall back to arbitrary scraped chunks when no date is present/found.
+    candidates = collect_candidates(date_needles)
+    if not candidates and deadline:
+        fallback_needles = [phrase_from_words(deadline, 5), phrase_from_words(deadline, 5, tail=True)]
+        candidates = collect_candidates(fallback_needles)
+
+    if not candidates:
+        return None
+    _, start, end = max(candidates, key=lambda item: item[0])
+    return start, end
+
+
+def phrase_occurrences(text: str, phrase: str) -> list[tuple[int, int]]:
+    if not phrase:
+        return []
+    return [m.span() for m in re.finditer(re.escape(phrase), text, flags=re.I)]
+
+
+def phrase_needs_prefix(text: str, phrase: str, target_start: int) -> bool:
+    """Text fragments pair the first matching start with a later end; repeated starts need a prefix."""
+    return sum(1 for start, _ in phrase_occurrences(text, phrase) if start < target_start) > 0
+
+
+def label_stripped_start(page_text: str, cue_start: int, date_start: int) -> int:
+    """Drop ultra-generic labels like 'Date limite :' but keep useful labels like 'Date limite de dépôt…'."""
+    intro = page_text[cue_start:date_start]
+    match = re.match(r"\s*date\s+limite\s*:\s*", intro, flags=re.I)
+    if match:
+        return cue_start + match.end()
+    return cue_start
+
+
+def short_end_anchor(page_text: str, date_end: int) -> str:
+    """Pick a short, stable end anchor after the deadline context."""
+    after = page_text[date_end:min(len(page_text), date_end + 700)]
+
+    # On structured pages, the next field label is usually the cleanest range endpoint.
+    for pattern in [r"\bMontant\s*:\s*", r"\bBudget\s*:\s*", r"\bFinancement\s*:\s*"]:
+        match = re.search(pattern, after, flags=re.I)
+        if match and 10 <= match.start() <= 520:
+            return phrase_from_words(after[match.start():], 2)
+
+    # Cut before obvious UI/navigation chunks before trying sentence detection.
+    end_pos = min(len(after), 260)
+    after_norm = normalize(after)
+    for marker in STOP_AFTER_CUES:
+        marker_norm = normalize(marker)
+        marker_pos = after_norm.find(marker_norm)
+        if marker_pos < 0:
+            continue
+        # Convert approximate normalized position back by finding the literal marker when possible.
+        literal_pos = after.lower().find(marker.lower())
+        if literal_pos >= 0:
+            marker_pos = literal_pos
+        if 5 <= marker_pos < end_pos:
+            end_pos = marker_pos
+    snippet = after[:end_pos]
+
+    # Prefer the first natural sentence inside the non-UI region.
+    sentence = re.search(r"[.!?](?:\s|$)", snippet)
+    if sentence and sentence.start() >= 25:
+        snippet = snippet[:sentence.end()]
+
+    # Avoid ending inside a word when we only used the fallback length cap.
+    if end_pos == 260 and end_pos < len(after):
+        word_matches = list(WORD_RE.finditer(snippet))
+        if word_matches:
+            snippet = snippet[:word_matches[-1].end()]
+    return phrase_from_words(snippet, 4, tail=True) if snippet.strip() else ""
+
+
+def make_deadline_fragment(row: dict[str, Any], source_url: str, page_text: str) -> str | None:
+    span = best_deadline_span(row, page_text)
+    if not span:
+        return None
+    date_start, date_end = span
+    before = page_text[max(0, date_start - 220):date_start]
+    before_norm = normalize(before)
+    cue_start = date_start
+    for cue in DEADLINE_CUES:
+        cue_norm = normalize(cue)
+        idx = before_norm.rfind(cue_norm)
+        if idx >= 0:
+            # Approximate is enough to find the same cue in the original local slice.
+            original_idx = max(before.lower().rfind(cue.lower()), 0)
+            if original_idx == 0 and cue.lower() not in before.lower():
+                continue
+            cue_start = max(0, date_start - len(before) + original_idx)
+            break
+
+    content_start = label_stripped_start(page_text, cue_start, date_start)
+    start_text = phrase_from_words(page_text[content_start:min(len(page_text), content_start + 160)], 3)
+    end_text = short_end_anchor(page_text, date_end)
+    if not start_text:
+        return None
+    if end_text and normalize(end_text) in normalize(start_text):
+        end_text = ""
+
+    prefix_text = ""
+    if phrase_needs_prefix(page_text, start_text, content_start):
+        prefix_slice = page_text[max(0, content_start - 120):content_start]
+        prefix_text = phrase_from_words(prefix_slice, 4, tail=True) if prefix_slice.strip() else ""
+
+    components = []
+    if prefix_text:
+        components.append(quote(prefix_text, safe="") + "-")
+    components.append(quote(start_text, safe=""))
+    fragment = ",".join(components)
+    if end_text:
+        fragment += "," + quote(end_text, safe="")
+    return source_url.split("#")[0] + "#:~:text=" + fragment
+
+
+def fallback_deadline_fragment(row: dict[str, Any], source_url: str) -> str:
+    deadline = clean_space(row.get("deadline", ""))
+    if not deadline:
+        return source_url
+    start_text = phrase_from_words(re.sub(r"^\s*date\s+limite\s*:\s*", "", deadline, flags=re.I), 3)
+    end_text = phrase_from_words(deadline, 3, tail=True) if len(deadline) > len(start_text) + 12 else ""
+    fragment = quote(start_text, safe="")
+    if end_text and normalize(end_text) not in normalize(start_text):
+        fragment += "," + quote(end_text, safe="")
+    return source_url.split("#")[0] + "#:~:text=" + fragment
+
+
+def has_money_or_percent(text: str) -> bool:
+    return bool(MONEY_RE.search(text or ""))
+
+
+def amount_score(text: str, *, labelled: bool = False) -> int:
+    norm = normalize(text)
+    if not has_money_or_percent(text):
+        return 0
+    score = 8 if labelled else 0
+    euro_hits = re.findall(r"(?:€|euros?)", text, flags=re.I)
+    money_hits = MONEY_RE.findall(text)
+    if euro_hits:
+        score += 4
+    if len(money_hits) >= 2:
+        score += 4
+    if re.search(r"\b(?:entre|de)\b[^.]{0,80}\b(?:et|à|a)\b", text, flags=re.I):
+        score += 3
+    if "%" in text and not euro_hits:
+        score -= 3
+    for keyword in [
+        "montant", "aide", "subvention", "financement", "dotation", "plafond", "plafonnee",
+        "prise en charge", "budget", "prix", "cofinancement", "taux", "entre", "jusqu",
+    ]:
+        if keyword in norm:
+            score += 2
+    # Penalize contexts that look like user-interface noise, not funding amount.
+    for keyword in ["cookie", "commentaire", "newsletter", "partager", "mentions legales", "redevance", "occupation du domaine public", "arrete tarifaire", "tarifaire", "euros jour"]:
+        if keyword in norm:
+            score -= 8
+    return score
+
+
+def trim_to_word_boundary(text: str, max_len: int = 280) -> str:
+    text = clean_space(text)
+    if len(text) <= max_len:
+        return text
+    snippet = text[:max_len]
+    words = list(WORD_RE.finditer(snippet))
+    if words:
+        snippet = snippet[:words[-1].end()]
+    return clean_space(snippet.rstrip(" ,;:-")) + "…"
+
+
+def clean_amount_text(segment: str) -> str:
+    segment = clean_space(segment)
+    segment = AMOUNT_LABEL_RE.sub("", segment, count=1).strip(" :–-•")
+    # Keep at most two useful sentences; amount blurbs can be very long.
+    sentence_ends = list(re.finditer(r"[.!?](?:\s|$)", segment))
+    if sentence_ends:
+        first_end = sentence_ends[0].end()
+        second_end = sentence_ends[1].end() if len(sentence_ends) > 1 else first_end
+        if first_end >= 45 and has_money_or_percent(segment[:first_end]):
+            segment = segment[:first_end]
+        else:
+            cutoff = second_end if second_end <= 280 else first_end
+            if cutoff >= 45:
+                segment = segment[:cutoff]
+    return trim_to_word_boundary(segment, 280)
+
+
+def extract_amount_from_text(text: str) -> tuple[str, int, int] | None:
+    candidates: list[tuple[int, str, int, int]] = []
+
+    # Best case: a structured "Montant : ..." field.
+    for match in AMOUNT_LABEL_RE.finditer(text):
+        content_start = match.end()
+        window = text[content_start:min(len(text), content_start + 850)]
+        stop = AMOUNT_STOP_RE.search(window)
+        end = content_start + (stop.start() if stop and stop.start() > 20 else min(len(window), 420))
+        segment = text[match.start():end]
+        score = amount_score(segment, labelled=True)
+        if score > 0:
+            candidates.append((score, clean_amount_text(segment), content_start, end))
+
+    # Sentence-level fallback keeps ranges together (e.g. 80%, 50 000€, 5 000€ in one sentence).
+    sentence_start = 0
+    for sentence_end in [m.end() for m in re.finditer(r"[.!?](?:\s|$)", text)]:
+        sentence = text[sentence_start:sentence_end]
+        if 25 <= len(sentence) <= 700:
+            score = amount_score(sentence, labelled=False)
+            if score > 0:
+                candidates.append((score + 4, clean_amount_text(sentence), sentence_start, sentence_end))
+        sentence_start = sentence_end
+
+    # Fallback: find a money/percentage value surrounded by amount vocabulary.
+    for money in MONEY_RE.finditer(text):
+        start = max(0, money.start() - 220)
+        end = min(len(text), money.end() + 240)
+        context = text[start:end]
+        score = amount_score(context, labelled=False)
+        if score <= 0:
+            continue
+        # Start near the closest amount keyword before the number, when possible.
+        local_before = context[:money.start() - start]
+        keyword_matches = list(re.finditer(r"\b(?:aide|subvention|montant|dotation|plafond|plafonnée|financement|budget|entre|jusqu[’']?à)\b", local_before, flags=re.I))
+        if keyword_matches:
+            start = start + keyword_matches[-1].start()
+            context = text[start:end]
+        candidates.append((score, clean_amount_text(context), start, end))
+
+    if not candidates:
+        return None
+    _, amount_text, start, end = max(candidates, key=lambda item: (item[0], len(item[1])))
+    if not amount_text:
+        return None
+    return amount_text, start, end
+
+
+def fallback_existing_amount(row: dict[str, Any]) -> str:
+    value = clean_space(row.get("montant", ""))
+    if not value or amount_score(value, labelled=False) <= 0:
+        return ""
+    # Avoid values that are clearly dates misdetected as amounts.
+    if re.search(r"\b(janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)\b", value, re.I):
+        return ""
+    return trim_to_word_boundary(value, 180)
+
+
+def make_amount_fragment(source_url: str, page_text: str, amount_text: str, start: int, end: int) -> str:
+    start_text = phrase_from_words(amount_text, 3)
+    end_text = phrase_from_words(amount_text, 3, tail=True) if len(amount_text) > len(start_text) + 12 else ""
+    prefix_text = ""
+    if phrase_needs_prefix(page_text, start_text, start):
+        prefix_slice = page_text[max(0, start - 120):start]
+        prefix_text = phrase_from_words(prefix_slice, 4, tail=True) if prefix_slice.strip() else ""
+    components = []
+    if prefix_text:
+        components.append(quote(prefix_text, safe="") + "-")
+    components.append(quote(start_text, safe=""))
+    fragment = ",".join(components)
+    if end_text and normalize(end_text) not in normalize(start_text):
+        fragment += "," + quote(end_text, safe="")
+    return source_url.split("#")[0] + "#:~:text=" + fragment
+
+
+def source_urls_for_row(row: dict[str, Any]) -> list[str]:
+    urls: list[str] = []
+    for key in ("deadline_source", "lien"):
+        url = (row.get(key) or "").strip()
+        if url and url not in urls:
+            urls.append(url)
+    return urls
+
+
+def html_links(doc: str, base_url: str) -> list[tuple[str, str]]:
+    links: list[tuple[str, str]] = []
+    for match in re.finditer(r"<a\b[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>", doc, flags=re.I | re.S):
+        href = html.unescape(match.group(1)).strip()
+        if not href or href.startswith(("mailto:", "tel:", "javascript:")):
+            continue
+        url = urljoin(base_url, href)
+        label = clean_space(re.sub(r"(?s)<[^>]+>", " ", match.group(2)))
+        if not label:
+            label = url
+        links.append((label, url))
+    return links
+
+
+def detail_link_tokens(row: dict[str, Any]) -> list[str]:
+    stop = {
+        "appel", "appels", "projet", "projets", "ville", "paris", "date", "limite",
+        "depot", "dossiers", "candidature", "candidatures", "source", "statut", "ouvert",
+        "mercredi", "jeudi", "mardi", "samedi", "dimanche", "avant", "pour", "dans",
+    }
+    source = f"{row.get('titre', '')} {row.get('deadline', '')} {row.get('notes', '')}"
+    tokens = [t for t in re.findall(r"[a-z0-9]{4,}", normalize(source)) if t not in stop]
+    return list(dict.fromkeys(tokens))[:24]
+
+
+def candidate_detail_links(row: dict[str, Any], source_url: str, doc: str, *, limit: int = 4) -> list[str]:
+    source_base = source_url.split("#")[0]
+    tokens = detail_link_tokens(row)
+    scored: list[tuple[int, str]] = []
+    for label, url in html_links(doc, source_url):
+        url_base = url.split("#")[0]
+        if url_base == source_base:
+            continue
+        norm = normalize(f"{label} {url}")
+        score = sum(1 for token in tokens if token in norm)
+        if "/pages/" in url:
+            score += 2
+        if "appel" in norm or "projet" in norm:
+            score += 1
+        if score >= 3:
+            scored.append((score, url_base))
+    # Preserve best unique URLs.
+    best: dict[str, int] = {}
+    for score, url in scored:
+        best[url] = max(score, best.get(url, 0))
+    return [url for url, _ in sorted(best.items(), key=lambda item: item[1], reverse=True)[:limit]]
+
+
+def fetch_cached_text(url: str, page_cache: dict[str, str]) -> str:
+    if url not in page_cache:
+        try:
+            page_cache[url] = fetch_page_text(url)
+        except Exception:
+            page_cache[url] = ""
+    return page_cache[url]
+
+
+def fetch_cached_html(url: str, html_cache: dict[str, str]) -> str:
+    if url not in html_cache:
+        try:
+            html_cache[url] = fetch_page_html(url)
+        except Exception:
+            html_cache[url] = ""
+    return html_cache[url]
+
+
+def enrich_source_details(rows: list[dict[str, Any]]) -> None:
+    urls = sorted({url for row in rows for url in source_urls_for_row(row)})
+    page_cache: dict[str, str] = {}
+    html_cache: dict[str, str] = {}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        future_map = {pool.submit(fetch_page_text, url): url for url in urls}
+        for future in as_completed(future_map):
+            url = future_map[future]
+            try:
+                page_cache[url] = future.result()
+            except Exception:
+                page_cache[url] = ""
+
+    for row in rows:
+        deadline_url = (row.get("deadline_source") or row.get("lien") or "").strip()
+        if deadline_url:
+            page_text = page_cache.get(deadline_url, "")
+            row["deadline_href"] = make_deadline_fragment(row, deadline_url, page_text) if page_text else None
+            if not row["deadline_href"]:
+                row["deadline_href"] = fallback_deadline_fragment(row, deadline_url)
+        else:
+            row["deadline_href"] = ""
+
+        amount_found = ""
+        amount_href = ""
+        for source_url in source_urls_for_row(row):
+            page_text = page_cache.get(source_url, "")
+            if not page_text:
+                continue
+            extracted = extract_amount_from_text(page_text)
+            if not extracted:
+                continue
+            amount_found, start, end = extracted
+            amount_href = make_amount_fragment(source_url, page_text, amount_found, start, end)
+            break
+
+        if not amount_found:
+            for source_url in source_urls_for_row(row):
+                doc = fetch_cached_html(source_url, html_cache)
+                if not doc:
+                    continue
+                for detail_url in candidate_detail_links(row, source_url, doc):
+                    page_text = fetch_cached_text(detail_url, page_cache)
+                    if not page_text:
+                        continue
+                    extracted = extract_amount_from_text(page_text)
+                    if not extracted:
+                        continue
+                    amount_found, start, end = extracted
+                    amount_href = make_amount_fragment(detail_url, page_text, amount_found, start, end)
+                    break
+                if amount_found:
+                    break
+
+        if not amount_found:
+            amount_found = fallback_existing_amount(row)
+        row["amount_found"] = bool(amount_found)
+        row["amount_possible"] = amount_found or "Non indiqué dans la source"
+        row["amount_href"] = amount_href
+
+
+def build_summary(rows: list[dict[str, Any]], csv_path: Path) -> dict:
+    priority = Counter(r.get("priorite") or "Non classé" for r in rows)
+    sources = Counter(r.get("organisme") or "Source inconnue" for r in rows)
+    zones = Counter(r.get("zone") or "Non renseigné" for r in rows)
+    types = Counter(r.get("type_financement") or "À qualifier" for r in rows)
+    themes = Counter()
+    for r in rows:
+        themes.update(r.get("themes_list", []))
+    scores = [r.get("score_num", 0) for r in rows]
+    return {
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "csv_path": str(csv_path),
+        "total": len(rows),
+        "avg_score": round(mean(scores), 1) if scores else 0,
+        "max_score": max(scores) if scores else 0,
+        "with_deadline": sum(1 for r in rows if (r.get("deadline_date") or r.get("deadline") or "").strip()),
+        "with_amount": sum(1 for r in rows if r.get("amount_found")),
+        "priority": priority,
+        "sources": sources.most_common(12),
+        "zones": zones.most_common(),
+        "types": types.most_common(),
+        "themes": themes.most_common(14),
+    }
+
+
+def json_for_html(obj) -> str:
+    return json.dumps(obj, ensure_ascii=False).replace("</", "<\\/")
+
+
+def html_doc(rows: list[dict[str, Any]], summary: dict) -> str:
+    data_json = json_for_html({"rows": rows, "summary": summary})
+    return f"""<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ambition Campus — Dashboard financements</title>
+  <style>
+    :root {{
+      --bg: #f5f2ec;
+      --surface: #fffaf2;
+      --surface-2: #ffffff;
+      --ink: #191714;
+      --muted: #6f675d;
+      --line: #ded6ca;
+      --accent: #2557d6;
+      --accent-2: #ffb000;
+      --danger: #c0362c;
+      --ok: #16815b;
+      --radius: 22px;
+      --shadow: 0 18px 50px rgba(25, 23, 20, .08);
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      background:
+        radial-gradient(circle at top left, rgba(37,87,214,.16), transparent 30rem),
+        radial-gradient(circle at top right, rgba(255,176,0,.20), transparent 26rem),
+        var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      min-height: 100vh;
+    }}
+    a {{ color: inherit; }}
+    .shell {{ max-width: 1440px; margin: 0 auto; padding: 34px 28px 60px; }}
+    header {{ display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: end; margin-bottom: 24px; }}
+    .eyebrow {{ font: 700 12px/1 var(--mono); text-transform: uppercase; letter-spacing: .12em; color: var(--accent); margin-bottom: 10px; }}
+    h1 {{ font-size: clamp(34px, 5vw, 68px); line-height: .92; letter-spacing: -.065em; margin: 0; max-width: 900px; }}
+    .subtitle {{ margin: 14px 0 0; color: var(--muted); font-size: 16px; max-width: 760px; }}
+    .meta {{ text-align: right; color: var(--muted); font-size: 13px; }}
+    .meta code {{ display: block; max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); color: var(--ink); margin-top: 8px; }}
+
+    .grid {{ display: grid; gap: 16px; }}
+    .kpis {{ grid-template-columns: repeat(6, minmax(0, 1fr)); margin-bottom: 16px; }}
+    .card {{ background: rgba(255,250,242,.85); border: 1px solid rgba(222,214,202,.9); border-radius: var(--radius); box-shadow: var(--shadow); }}
+    .kpi {{ padding: 18px; min-height: 118px; display: flex; flex-direction: column; justify-content: space-between; }}
+    .kpi .label {{ color: var(--muted); font-size: 13px; }}
+    .kpi .value {{ font-size: 36px; line-height: 1; letter-spacing: -.05em; font-weight: 820; }}
+    .kpi.hot .value {{ color: var(--danger); }}
+    .kpi.good .value {{ color: var(--ok); }}
+
+    .main {{ grid-template-columns: 390px 1fr; align-items: start; }}
+    .panel {{ padding: 20px; }}
+    .panel h2 {{ margin: 0 0 16px; font-size: 18px; letter-spacing: -.02em; }}
+    .stack {{ display: grid; gap: 10px; }}
+    .bar-row {{ display: grid; grid-template-columns: 142px 1fr 36px; gap: 10px; align-items: center; font-size: 13px; color: var(--muted); }}
+    .bar {{ height: 10px; background: #ebe4d8; border-radius: 999px; overflow: hidden; }}
+    .fill {{ height: 100%; border-radius: inherit; background: var(--accent); }}
+    .fill.a {{ background: var(--danger); }} .fill.b {{ background: var(--accent-2); }} .fill.c {{ background: var(--accent); }} .fill.d {{ background: #89827a; }}
+    .chips {{ display: flex; flex-wrap: wrap; gap: 8px; }}
+    .chip {{ border: 1px solid var(--line); background: rgba(255,255,255,.65); padding: 8px 10px; border-radius: 999px; font-size: 12px; color: var(--muted); }}
+    .chip strong {{ color: var(--ink); }}
+
+    .toolbar {{ position: sticky; top: 0; z-index: 4; backdrop-filter: blur(18px); background: rgba(245,242,236,.78); border: 1px solid rgba(222,214,202,.85); border-radius: var(--radius); padding: 12px; margin-bottom: 16px; display: grid; grid-template-columns: 1.35fr repeat(3, minmax(140px, .6fr)); gap: 10px; }}
+    input, select {{ width: 100%; min-height: 44px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-2); color: var(--ink); padding: 0 12px; font: 500 14px/1 var(--sans); outline: none; }}
+    input:focus, select:focus {{ border-color: var(--accent); box-shadow: 0 0 0 4px rgba(37,87,214,.12); }}
+
+    .list {{ display: grid; gap: 12px; }}
+    .opp {{ background: rgba(255,255,255,.82); border: 1px solid var(--line); border-radius: 20px; padding: 16px; display: grid; grid-template-columns: 74px 1fr auto; gap: 16px; align-items: start; }}
+    .score {{ width: 58px; height: 58px; border-radius: 18px; display: grid; place-items: center; background: #f1eee8; font-weight: 850; font-size: 20px; letter-spacing: -.04em; }}
+    .opp.a .score {{ background: rgba(192,54,44,.12); color: var(--danger); }}
+    .opp.b .score {{ background: rgba(255,176,0,.18); color: #8a5d00; }}
+    .opp.c .score {{ background: rgba(37,87,214,.11); color: var(--accent); }}
+    .opp h3 {{ margin: 0; font-size: 17px; line-height: 1.25; letter-spacing: -.02em; }}
+    .opp h3 a {{ text-decoration: none; }}
+    .opp h3 a:hover {{ text-decoration: underline; }}
+    .tags {{ display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }}
+    .tag {{ font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 5px 7px; background: #fff; }}
+    .details {{ color: var(--muted); font-size: 13px; display: grid; gap: 5px; }}
+    .proof-row {{ display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }}
+    .proof-value {{ color: var(--muted); }}
+    .external-link-icon {{ display: inline-grid; place-items: center; width: 19px; height: 19px; color: var(--ink); text-decoration: none; border-radius: 5px; vertical-align: -4px; flex: 0 0 auto; }}
+    .external-link-icon:hover {{ color: var(--accent); background: rgba(37,87,214,.10); }}
+    .external-link-icon svg {{ width: 16px; height: 16px; stroke: currentColor; stroke-width: 2.8; fill: none; stroke-linecap: round; stroke-linejoin: round; }}
+    .right {{ display: grid; gap: 8px; justify-items: end; min-width: 150px; }}
+    .priority {{ font: 800 11px/1 var(--mono); text-transform: uppercase; padding: 8px 9px; border-radius: 999px; background: #f0ebe2; color: var(--muted); }}
+    .priority.a {{ color: var(--danger); background: rgba(192,54,44,.10); }}
+    .priority.b {{ color: #8a5d00; background: rgba(255,176,0,.20); }}
+    .priority.c {{ color: var(--accent); background: rgba(37,87,214,.10); }}
+    .open {{ text-decoration: none; border: 1px solid var(--ink); border-radius: 999px; padding: 9px 12px; font-weight: 760; font-size: 13px; background: var(--ink); color: white; }}
+    .empty {{ padding: 44px; text-align: center; color: var(--muted); }}
+    .footnote {{ margin-top: 16px; color: var(--muted); font-size: 12px; }}
+
+    @media (max-width: 1100px) {{
+      .kpis {{ grid-template-columns: repeat(3, 1fr); }}
+      .main {{ grid-template-columns: 1fr; }}
+      .toolbar {{ grid-template-columns: 1fr 1fr; }}
+      header {{ grid-template-columns: 1fr; }}
+      .meta {{ text-align: left; }}
+    }}
+    @media (max-width: 700px) {{
+      .shell {{ padding: 22px 14px 40px; }}
+      .kpis {{ grid-template-columns: repeat(2, 1fr); }}
+      .toolbar {{ grid-template-columns: 1fr; }}
+      .opp {{ grid-template-columns: 1fr; }}
+      .score {{ width: auto; height: auto; padding: 10px; justify-self: start; }}
+      .right {{ justify-items: start; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div>
+        <div class="eyebrow">Ambition Campus · radar financements</div>
+        <h1>Vue d’ensemble sourcing</h1>
+        <p class="subtitle">Un cockpit local pour trier vite les appels à projets, subventions, fondations et dispositifs utiles à l’asso.</p>
+      </div>
+      <div class="meta">
+        Généré le <strong id="generatedAt"></strong>
+        <code id="csvPath"></code>
+      </div>
+    </header>
+
+    <section class="grid kpis" id="kpis"></section>
+
+    <main class="grid main">
+      <aside class="grid">
+        <section class="card panel">
+          <h2>Répartition priorité</h2>
+          <div class="stack" id="priorityBars"></div>
+        </section>
+        <section class="card panel">
+          <h2>Sources les plus actives</h2>
+          <div class="stack" id="sourceBars"></div>
+        </section>
+        <section class="card panel">
+          <h2>Thèmes détectés</h2>
+          <div class="chips" id="themeChips"></div>
+        </section>
+        <p class="footnote">Note : le score sert à prioriser, pas à décider. La deadline et l’éligibilité doivent être vérifiées sur la page officielle.</p>
+      </aside>
+
+      <section>
+        <div class="toolbar">
+          <input id="search" type="search" placeholder="Chercher : mentorat, Paris, étudiants, FSE…" />
+          <select id="priorityFilter"><option value="">Toutes priorités</option></select>
+          <select id="sourceFilter"><option value="">Toutes sources</option></select>
+          <select id="themeFilter"><option value="">Tous thèmes</option></select>
+        </div>
+        <div class="list" id="list"></div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const DATA = {data_json};
+    const rows = DATA.rows;
+    const summary = DATA.summary;
+
+    const $ = (id) => document.getElementById(id);
+    const priorityClass = (p) => p.startsWith('A') ? 'a' : p.startsWith('B') ? 'b' : p.startsWith('C') ? 'c' : 'd';
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
+    const encodeTextFragment = (s) => encodeURIComponent(s).replace(/[!'()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+    const pct = (n, d) => d ? Math.round((n / d) * 100) : 0;
+
+    function deadlineHref(r) {{
+      const base = String(r.deadline_source || r.lien || '').trim();
+      if (!base) return '';
+      const text = String(r.deadline || '').replace(/\\s+/g, ' ').trim();
+      if (!text) return base;
+      let snippet = text;
+      if (snippet.length > 220) {{
+        snippet = snippet.slice(0, 220).replace(/\\s+\\S*$/, '').trim();
+      }}
+      if (!snippet) return base;
+      return base.split('#')[0] + '#:~:text=' + encodeTextFragment(snippet);
+    }}
+
+    function externalIcon(href, title='Ouvrir le passage source') {{
+      if (!href) return '';
+      return `<a class="external-link-icon" href="${{esc(href)}}" target="_blank" rel="noreferrer" title="${{esc(title)}}" aria-label="${{esc(title)}}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6"/><path d="M20 4L10 14"/><path d="M20 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h5"/></svg></a>`;
+    }}
+
+    function unique(field) {{
+      return [...new Set(rows.map(r => r[field]).filter(Boolean))].sort((a,b) => a.localeCompare(b, 'fr'));
+    }}
+    function uniqueThemes() {{
+      return [...new Set(rows.flatMap(r => r.themes_list || []))].sort((a,b) => a.localeCompare(b, 'fr'));
+    }}
+    function addOptions(id, values) {{
+      const el = $(id);
+      values.forEach(v => {{ const o = document.createElement('option'); o.value = v; o.textContent = v; el.appendChild(o); }});
+    }}
+
+    function renderKpis() {{
+      const a = summary.priority['A - à traiter vite'] || 0;
+      const b = summary.priority['B - intéressant'] || 0;
+      const c = summary.priority['C - veille'] || 0;
+      $('kpis').innerHTML = [
+        ['Total', summary.total, ''],
+        ['À traiter vite', a, 'hot'],
+        ['Intéressants', b, ''],
+        ['Veille', c, ''],
+        ['Avec deadline', summary.with_deadline, 'good'],
+        ['Score moyen', summary.avg_score, ''],
+      ].map(([label, value, cls]) => `<article class="card kpi ${{cls}}"><div class="label">${{label}}</div><div class="value">${{value}}</div></article>`).join('');
+    }}
+
+    function barRow(label, value, max, cls='') {{
+      return `<div class="bar-row"><span title="${{esc(label)}}">${{esc(label.length > 24 ? label.slice(0, 24) + '…' : label)}}</span><div class="bar"><div class="fill ${{cls}}" style="width:${{pct(value, max)}}%"></div></div><strong>${{value}}</strong></div>`;
+    }}
+    function renderSidebars() {{
+      const prEntries = Object.entries(summary.priority);
+      const maxPr = Math.max(1, ...prEntries.map(x => x[1]));
+      $('priorityBars').innerHTML = prEntries.map(([label, value]) => barRow(label, value, maxPr, priorityClass(label))).join('');
+      const maxSource = Math.max(1, ...summary.sources.map(x => x[1]));
+      $('sourceBars').innerHTML = summary.sources.map(([label, value]) => barRow(label, value, maxSource)).join('');
+      $('themeChips').innerHTML = summary.themes.map(([label, value]) => `<button class="chip" data-theme="${{esc(label)}}"><strong>${{value}}</strong> ${{esc(label)}}</button>`).join('');
+      document.querySelectorAll('[data-theme]').forEach(btn => btn.addEventListener('click', () => {{ $('themeFilter').value = btn.dataset.theme; renderList(); }}));
+    }}
+
+    function renderList() {{
+      const q = $('search').value.trim().toLowerCase();
+      const pr = $('priorityFilter').value;
+      const src = $('sourceFilter').value;
+      const theme = $('themeFilter').value;
+      const filtered = rows.filter(r => {{
+        const blob = [r.titre, r.organisme, r.zone, r.themes, r.deadline, r.amount_possible, r.montant, r.notes].join(' ').toLowerCase();
+        return (!q || blob.includes(q)) && (!pr || r.priorite === pr) && (!src || r.organisme === src) && (!theme || (r.themes_list || []).includes(theme));
+      }}).sort((a,b) => (b.score_num || 0) - (a.score_num || 0));
+
+      $('list').innerHTML = filtered.length ? filtered.map(r => {{
+        const cls = priorityClass(r.priorite || '');
+        const tags = [r.zone, r.type_financement, ...(r.themes_list || []).slice(0,4)].filter(Boolean);
+        const deadline = r.deadline_date ? `<div><strong>Deadline :</strong> ${{esc(r.deadline_date)}}</div>` : (r.deadline ? `<div><strong>Deadline :</strong> ${{esc(r.deadline)}}</div>` : '');
+        const statusHref = r.deadline_href || deadlineHref(r);
+        const deadlineStatus = r.deadline_status ? `<div class="proof-row"><strong>Statut deadline :</strong> <span class="proof-value">${{esc(r.deadline_status)}}</span>${{externalIcon(statusHref, 'Ouvrir le passage source surligné')}}</div>` : '';
+        const amountText = r.amount_possible || 'Non indiqué dans la source';
+        const amount = r.amount_found && r.amount_href
+          ? `<div class="proof-row"><strong>Montant possible :</strong> <span class="proof-value">${{esc(amountText)}}</span>${{externalIcon(r.amount_href, 'Ouvrir le montant dans la source')}}</div>`
+          : `<div><strong>Montant possible :</strong> ${{esc(amountText)}}</div>`;
+        return `<article class="opp ${{cls}}">
+          <div class="score">${{esc(r.score)}}</div>
+          <div>
+            <h3><a href="${{esc(r.lien)}}" target="_blank" rel="noreferrer">${{esc(r.titre)}}</a></h3>
+            <div class="tags">${{tags.map(t => `<span class="tag">${{esc(t)}}</span>`).join('')}}</div>
+            <div class="details">
+              <div><strong>Source :</strong> ${{esc(r.organisme)}}</div>
+              ${{deadline}}${{deadlineStatus}}${{amount}}
+              <div><strong>Action :</strong> ${{esc(r.prochaine_action)}}</div>
+            </div>
+          </div>
+          <div class="right">
+            <span class="priority ${{cls}}">${{esc(r.priorite)}}</span>
+            <a class="open" href="${{esc(r.lien)}}" target="_blank" rel="noreferrer">Ouvrir</a>
+          </div>
+        </article>`;
+      }}).join('') : '<div class="card empty">Aucun résultat avec ces filtres.</div>';
+    }}
+
+    function init() {{
+      $('generatedAt').textContent = summary.generated_at;
+      $('csvPath').textContent = summary.csv_path;
+      renderKpis();
+      renderSidebars();
+      addOptions('priorityFilter', unique('priorite'));
+      addOptions('sourceFilter', unique('organisme'));
+      addOptions('themeFilter', uniqueThemes());
+      ['search','priorityFilter','sourceFilter','themeFilter'].forEach(id => $(id).addEventListener('input', renderList));
+      renderList();
+    }}
+    init();
+  </script>
+</body>
+</html>
+"""
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--csv", type=Path, default=None, help="CSV to render. Defaults to latest outputs/*_opportunities.csv")
+    parser.add_argument("--out", type=Path, default=DASHBOARD_DIR / "index.html")
+    args = parser.parse_args()
+
+    csv_path = args.csv or latest_csv()
+    rows = read_rows(csv_path)
+    summary = build_summary(rows, csv_path)
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(html_doc(rows, summary), encoding="utf-8")
+    print(f"Dashboard: {args.out}")
+    print(f"Rows: {len(rows)}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

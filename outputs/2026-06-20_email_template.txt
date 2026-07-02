@@ -1,0 +1,18 @@
+Objet : Veille financements Ambition Campus — 2026-06-20
+
+Bonjour,
+
+La première veille automatique Ambition Campus a tourné.
+
+Fichiers produits :
+- Digest : /Users/YY/.openclaw/workspace/ambition_campus_funding_watch/outputs/2026-06-20_digest.md
+- CSV Google Sheets : /Users/YY/.openclaw/workspace/ambition_campus_funding_watch/outputs/2026-06-20_opportunities.csv
+
+Priorités à regarder en premier :
+1. Appels à projets mentorat / égalité des chances
+2. Ville de Paris — remobilisation jeunes / Paris Code / Dynamiques Emploi
+3. Région Île-de-France — orientation, décrochage scolaire, associations
+4. Fondation de France — Déclics Jeunes / pratiques inclusives
+5. La France s’engage / Fondation RATP
+
+Action recommandée : ouvrir les lignes classées A, vérifier les deadlines, puis passer en statut « candidater » ou « ignorer » dans le Google Sheet.
