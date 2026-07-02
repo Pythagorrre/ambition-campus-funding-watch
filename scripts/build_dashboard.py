@@ -51,16 +51,24 @@ AMOUNT_STOP_RE = re.compile(
 )
 
 
-def latest_csv() -> Path:
-    files = sorted(OUTPUT_DIR.glob("*_opportunities.csv"), key=lambda p: p.stat().st_mtime, reverse=True)
+def all_csvs() -> list[Path]:
+    # Tri par nom de fichier = tri chronologique (préfixe YYYY-MM-DD)
+    files = sorted(OUTPUT_DIR.glob("*_opportunities.csv"))
     if not files:
         raise FileNotFoundError(f"No opportunity CSV found in {OUTPUT_DIR}")
-    return files[0]
+    return files
 
 
-def read_rows(path: Path) -> list[dict[str, Any]]:
-    with path.open(newline="", encoding="utf-8") as fh:
-        rows = list(csv.DictReader(fh))
+def read_rows(paths: list[Path], include_expired: bool = False) -> list[dict[str, Any]]:
+    # Agrège tous les CSV hebdo : une même opportunité (même lien) revue lors
+    # d'un run ultérieur remplace l'ancienne ligne (deadline/score plus frais).
+    merged: dict[str, dict[str, Any]] = {}
+    for path in paths:
+        with path.open(newline="", encoding="utf-8") as fh:
+            for row in csv.DictReader(fh):
+                key = (row.get("lien") or "").strip() or f"{row.get('titre', '')}|{row.get('organisme', '')}"
+                merged[key] = row
+    rows = list(merged.values())
     for row in rows:
         try:
             row["score_num"] = int(float(row.get("score") or 0))
@@ -70,6 +78,9 @@ def read_rows(path: Path) -> list[dict[str, Any]]:
         parsed_deadline = deadline_date_from_text(row.get("deadline", ""))
         if parsed_deadline:
             row["deadline_date"] = parsed_deadline
+    if not include_expired:
+        today = date.today().isoformat()
+        rows = [r for r in rows if not ((r.get("deadline_date") or "").strip() and (r.get("deadline_date") or "").strip() < today)]
     enrich_source_details(rows)
     return rows
 
@@ -605,7 +616,7 @@ def enrich_source_details(rows: list[dict[str, Any]]) -> None:
         row["amount_href"] = amount_href
 
 
-def build_summary(rows: list[dict[str, Any]], csv_path: Path) -> dict:
+def build_summary(rows: list[dict[str, Any]], csv_path: Path | str) -> dict:
     priority = Counter(r.get("priorite") or "Non classé" for r in rows)
     sources = Counter(r.get("organisme") or "Source inconnue" for r in rows)
     zones = Counter(r.get("zone") or "Non renseigné" for r in rows)
@@ -919,13 +930,15 @@ def html_doc(rows: list[dict[str, Any]], summary: dict) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--csv", type=Path, default=None, help="CSV to render. Defaults to latest outputs/*_opportunities.csv")
+    parser.add_argument("--csv", type=Path, default=None, help="CSV to render. Defaults to aggregating all outputs/*_opportunities.csv")
     parser.add_argument("--out", type=Path, default=DASHBOARD_DIR / "index.html")
+    parser.add_argument("--include-expired", action="store_true", help="keep opportunities whose deadline is already past")
     args = parser.parse_args()
 
-    csv_path = args.csv or latest_csv()
-    rows = read_rows(csv_path)
-    summary = build_summary(rows, csv_path)
+    csv_paths = [args.csv] if args.csv else all_csvs()
+    rows = read_rows(csv_paths, include_expired=args.include_expired)
+    label = str(csv_paths[0]) if len(csv_paths) == 1 else f"{len(csv_paths)} CSV agrégés ({csv_paths[0].name} → {csv_paths[-1].name})"
+    summary = build_summary(rows, label)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(html_doc(rows, summary), encoding="utf-8")
     print(f"Dashboard: {args.out}")
