@@ -1,0 +1,50 @@
+name: Newsletter hebdomadaire
+
+on:
+  schedule:
+    # Vendredi 17h00 UTC = 19h00 Paris en été (18h00 en hiver — cron UTC fixe)
+    - cron: "0 17 * * 5"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  newsletter:
+    runs-on: ubuntu-latest
+    env:
+      SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - id: build
+        name: Générer la newsletter (nouveautés des 7 derniers jours)
+        run: python3 scripts/build_newsletter.py --days 7
+
+      - name: Archiver la newsletter
+        run: |
+          git config user.name "veille-bot"
+          git config user.email "veille-bot@users.noreply.github.com"
+          git add outputs/newsletters/
+          git diff --cached --quiet || { git commit -m "Newsletter du $(date -u +%Y-%m-%d)"; git push; }
+
+      - name: Envoyer par mail
+        if: env.SMTP_USERNAME != ''
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: ${{ steps.build.outputs.subject }}
+          to: ${{ secrets.MAIL_TO }}
+          from: Veille Ambition Campus <${{ secrets.SMTP_USERNAME }}>
+          html_body: file://${{ steps.build.outputs.html_path }}
+
+      - name: SMTP non configuré
+        if: env.SMTP_USERNAME == ''
+        run: echo "Secrets SMTP absents — newsletter générée et archivée dans outputs/newsletters/, mais non envoyée. Voir le README pour configurer l'envoi."

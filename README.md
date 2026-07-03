@@ -79,17 +79,26 @@ Colonnes clés :
 - `eligibilite_ambition_campus`
 - `prochaine_action`
 
-## Mail hebdo
+## Newsletter hebdomadaire automatique
 
-Objet recommandé :
+Chaque vendredi à 19h (heure de Paris, été), le workflow `newsletter.yml`
+génère un mail HTML avec les opportunités détectées ces 7 derniers jours
+(`scripts/build_newsletter.py`), l'archive dans `outputs/newsletters/`
+et l'envoie aux destinataires configurés.
 
-```text
-Veille financements Ambition Campus — semaine du {{date}}
-```
+L'envoi nécessite 5 secrets dans le repo GitHub
+(Settings → Secrets and variables → Actions → New repository secret) :
 
-Corps : copier le contenu de `outputs/YYYY-MM-DD_digest.md`.
+- `SMTP_SERVER` : ex. `smtp.gmail.com`
+- `SMTP_PORT` : ex. `465`
+- `SMTP_USERNAME` : l'adresse d'envoi
+- `SMTP_PASSWORD` : pour Gmail, un « mot de passe d'application »
+  (myaccount.google.com → Sécurité → Validation en deux étapes → Mots de passe d'application)
+- `MAIL_TO` : destinataires séparés par des virgules
 
-Quand Google/Gmail sera reconnecté, on pourra envoyer automatiquement ce digest par mail et/ou append les lignes dans Sheets.
+Sans ces secrets, la newsletter est quand même générée et archivée à chaque
+run — seul l'envoi est sauté. Test manuel : onglet Actions → « Newsletter
+hebdomadaire » → Run workflow.
 
 ## Découverte automatique de nouvelles sources
 
