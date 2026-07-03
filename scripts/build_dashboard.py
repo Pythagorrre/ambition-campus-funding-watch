@@ -8,6 +8,7 @@ import csv
 import html
 import json
 import re
+import ssl
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
@@ -15,6 +16,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 from urllib.parse import quote, urljoin
+from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -107,12 +109,22 @@ def html_to_text(doc: str) -> str:
 
 def fetch_page_html(url: str, timeout: int = 7) -> str:
     req = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"})
-    with urlopen(req, timeout=timeout) as response:
-        raw = response.read(1_500_000)
-        content_type = response.headers.get("Content-Type", "")
-        charset_match = re.search(r"charset=([\w.-]+)", content_type, re.I)
-        charset = charset_match.group(1) if charset_match else "utf-8"
-        return raw.decode(charset, "replace")
+    # Comme funding_watch : certains environnements (Python macOS notamment) n'ont
+    # pas de magasin de certificats configuré ; on retente sans vérification.
+    last_error: Exception | None = None
+    for context in (None, ssl._create_unverified_context()):
+        try:
+            with urlopen(req, timeout=timeout, context=context) as response:
+                raw = response.read(1_500_000)
+                content_type = response.headers.get("Content-Type", "")
+                charset_match = re.search(r"charset=([\w.-]+)", content_type, re.I)
+                charset = charset_match.group(1) if charset_match else "utf-8"
+                return raw.decode(charset, "replace")
+        except URLError as exc:
+            last_error = exc
+            if not isinstance(exc.reason, ssl.SSLError):
+                raise
+    raise last_error if last_error else URLError("fetch failed")
 
 
 def fetch_page_text(url: str, timeout: int = 7) -> str:
@@ -286,8 +298,14 @@ def short_end_anchor(page_text: str, date_end: int) -> str:
     # Avoid ending inside a word when we only used the fallback length cap.
     if end_pos == 260 and end_pos < len(after):
         word_matches = list(WORD_RE.finditer(snippet))
-        if word_matches:
-            snippet = snippet[:word_matches[-1].end()]
+        # Si le texte continue sans coupure après le cap, le dernier « mot » du
+        # snippet est tronqué (ex. « arrondi » pour « arrondissements ») : on le
+        # retire, sinon le fragment ne matche rien et rien n'est surligné.
+        if word_matches and word_matches[-1].end() == len(snippet) and WORD_RE.match(after[end_pos]):
+            word_matches.pop()
+        if not word_matches:
+            return ""
+        snippet = snippet[:word_matches[-1].end()]
     return phrase_from_words(snippet, 4, tail=True) if snippet.strip() else ""
 
 
@@ -311,6 +329,18 @@ def make_deadline_fragment(row: dict[str, Any], source_url: str, page_text: str)
             break
 
     content_start = label_stripped_start(page_text, cue_start, date_start)
+
+    # Inclure l'heure éventuelle qui suit la date (« … 2026 à 23H59 »).
+    time_tail = re.match(r"\s*(?:à|a)\s*\d{1,2}\s*[hH:]\s*(?:\d{2})?", page_text[date_end:date_end + 24])
+    if time_tail:
+        date_end += time_tail.end()
+
+    # Un fragment exact « cue + date » est bien plus fiable qu'une plage début,fin
+    # dont la borne de fin peut tomber dans un autre bloc de la page.
+    exact_text = clean_space(page_text[content_start:date_end])
+    if exact_text and len(exact_text) <= 250:
+        return source_url.split("#")[0] + "#:~:text=" + quote(exact_text, safe="")
+
     start_text = phrase_from_words(page_text[content_start:min(len(page_text), content_start + 160)], 3)
     end_text = short_end_anchor(page_text, date_end)
     if not start_text:
@@ -333,16 +363,44 @@ def make_deadline_fragment(row: dict[str, Any], source_url: str, page_text: str)
     return source_url.split("#")[0] + "#:~:text=" + fragment
 
 
-def fallback_deadline_fragment(row: dict[str, Any], source_url: str) -> str:
+def fallback_deadline_fragment(row: dict[str, Any], source_url: str, page_text: str = "") -> str:
     deadline = clean_space(row.get("deadline", ""))
     if not deadline:
         return source_url
+
+    def anchored(fragment_text: str) -> str:
+        # Si on a pu lire la page et que le texte visé n'y figure pas (contenu
+        # JS, page modifiée…), un fragment mort n'apporte rien : lien nu.
+        if page_text and normalize(fragment_text) not in normalize(page_text):
+            return source_url
+        return source_url.split("#")[0] + "#:~:text=" + quote(fragment_text, safe="")
+
+    # Le champ deadline du CSV est une capture tronquée à taille fixe : son
+    # dernier mot est souvent coupé (« dans les arrondi » ne matche rien).
+    # On préfère un fragment exact arrêté juste après la date + heure éventuelle.
+    date_match = FRENCH_DATE_RE.search(deadline)
+    if date_match:
+        end = date_match.end()
+        time_tail = re.match(r"\s*(?:à|a)\s*\d{1,2}\s*[hH:]\s*(?:\d{2})?", deadline[end:end + 24])
+        if time_tail:
+            end += time_tail.end()
+        exact = clean_space(re.sub(r"^\s*date\s+limite\s*:\s*", "", deadline[:end], flags=re.I))
+        if exact:
+            return anchored(exact)
     start_text = phrase_from_words(re.sub(r"^\s*date\s+limite\s*:\s*", "", deadline, flags=re.I), 3)
-    end_text = phrase_from_words(deadline, 3, tail=True) if len(deadline) > len(start_text) + 12 else ""
-    fragment = quote(start_text, safe="")
-    if end_text and normalize(end_text) not in normalize(start_text):
-        fragment += "," + quote(end_text, safe="")
-    return source_url.split("#")[0] + "#:~:text=" + fragment
+    # Pas de date détectée : plage début,fin en écartant le dernier mot
+    # (potentiellement tronqué) de l'ancre de fin.
+    words = list(WORD_RE.finditer(deadline))
+    end_text = ""
+    if len(words) >= 7:
+        end_text = clean_space(deadline[words[-4].start():words[-2].end()])
+    if not end_text or normalize(end_text) in normalize(start_text):
+        return anchored(start_text)
+    if page_text:
+        page_norm = normalize(page_text)
+        if normalize(start_text) not in page_norm or normalize(end_text) not in page_norm:
+            return source_url
+    return source_url.split("#")[0] + "#:~:text=" + quote(start_text, safe="") + "," + quote(end_text, safe="")
 
 
 def has_money_or_percent(text: str) -> bool:
@@ -433,6 +491,16 @@ def extract_amount_from_text(text: str) -> tuple[str, int, int] | None:
     for money in MONEY_RE.finditer(text):
         start = max(0, money.start() - 220)
         end = min(len(text), money.end() + 240)
+        # Ne pas couper un mot aux bornes : un fragment #:~:text= construit sur
+        # un mot tronqué ne surligne rien dans le navigateur.
+        if start > 0 and WORD_RE.match(text[start]) and WORD_RE.match(text[start - 1]):
+            next_space = text.find(" ", start, money.start())
+            if next_space >= 0:
+                start = next_space + 1
+        if end < len(text) and WORD_RE.match(text[end - 1]) and WORD_RE.match(text[end]):
+            prev_space = text.rfind(" ", money.end(), end)
+            if prev_space >= 0:
+                end = prev_space
         context = text[start:end]
         score = amount_score(context, labelled=False)
         if score <= 0:
@@ -574,7 +642,7 @@ def enrich_source_details(rows: list[dict[str, Any]]) -> None:
             page_text = page_cache.get(deadline_url, "")
             row["deadline_href"] = make_deadline_fragment(row, deadline_url, page_text) if page_text else None
             if not row["deadline_href"]:
-                row["deadline_href"] = fallback_deadline_fragment(row, deadline_url)
+                row["deadline_href"] = fallback_deadline_fragment(row, deadline_url, page_text)
         else:
             row["deadline_href"] = ""
 
