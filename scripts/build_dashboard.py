@@ -720,156 +720,289 @@ def html_doc(rows: list[dict[str, Any]], summary: dict) -> str:
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Ambition Campus — Dashboard financements</title>
+  <title>Ambition Campus — Radar financements</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=Playfair+Display:wght@700;800;900&display=swap" rel="stylesheet">
   <style>
     :root {{
-      --bg: #f5f2ec;
-      --surface: #fffaf2;
-      --surface-2: #ffffff;
-      --ink: #191714;
-      --muted: #6f675d;
-      --line: #ded6ca;
-      --accent: #2557d6;
-      --accent-2: #ffb000;
-      --danger: #c0362c;
-      --ok: #16815b;
-      --radius: 22px;
-      --shadow: 0 18px 50px rgba(25, 23, 20, .08);
-      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      /* Brand */
+      --ac-blue: #002A98;
+      --ac-cyan: #0FC0E0;
+      --ac-blue-secondary: #31559B;
+      --ac-blue-light: #4E82C3;
+      --ac-ink: #14181F;
+      --ac-soft-bg: #EEF2FA;
+      /* Neutrals */
+      --page-bg: #F6F8FC;
+      --surface: #FFFFFF;
+      --surface-soft: #F8FAFF;
+      --border: rgba(20, 24, 31, 0.10);
+      --border-strong: rgba(0, 42, 152, 0.18);
+      /* Status */
+      --priority-high: #EE2129;
+      --priority-high-bg: #FDE8EA;
+      --priority-watch: #31559B;
+      --priority-watch-bg: #EAF0FF;
+      --priority-interesting: #D99A00;
+      --priority-interesting-bg: #FFF4D8;
+      --success: #0F9B72;
+      /* Effects */
+      --shadow-card: 0 10px 30px rgba(20, 24, 31, 0.07);
+      --shadow-soft: 0 6px 18px rgba(20, 24, 31, 0.05);
+      /* Radius */
+      --radius-lg: 24px;
+      --radius-md: 18px;
+      --radius-sm: 999px;
+      /* Layout */
+      --container: 1180px;
     }}
 
     * {{ box-sizing: border-box; }}
+    html, body {{ margin: 0; padding: 0; }}
     body {{
-      margin: 0;
+      overflow-x: clip;
+      font-family: "Montserrat", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ac-ink);
       background:
-        radial-gradient(circle at top left, rgba(37,87,214,.16), transparent 30rem),
-        radial-gradient(circle at top right, rgba(255,176,0,.20), transparent 26rem),
-        var(--bg);
-      color: var(--ink);
-      font-family: var(--sans);
+        radial-gradient(circle at top right, rgba(15, 192, 224, 0.18), transparent 30%),
+        linear-gradient(180deg, #F8FAFF 0%, #EEF2FA 100%);
       min-height: 100vh;
     }}
     a {{ color: inherit; }}
-    .shell {{ max-width: 1440px; margin: 0 auto; padding: 34px 28px 60px; }}
-    header {{ display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: end; margin-bottom: 24px; }}
-    .eyebrow {{ font: 700 12px/1 var(--mono); text-transform: uppercase; letter-spacing: .12em; color: var(--accent); margin-bottom: 10px; }}
-    h1 {{ font-size: clamp(34px, 5vw, 68px); line-height: .92; letter-spacing: -.065em; margin: 0; max-width: 900px; }}
-    .subtitle {{ margin: 14px 0 0; color: var(--muted); font-size: 16px; max-width: 760px; }}
-    .meta {{ text-align: right; color: var(--muted); font-size: 13px; }}
-    .meta code {{ display: block; max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); color: var(--ink); margin-top: 8px; }}
+    :focus-visible {{ outline: 3px solid rgba(15, 192, 224, 0.55); outline-offset: 3px; }}
 
-    .grid {{ display: grid; gap: 16px; }}
-    .kpis {{ grid-template-columns: repeat(6, minmax(0, 1fr)); margin-bottom: 16px; }}
-    .card {{ background: rgba(255,250,242,.85); border: 1px solid rgba(222,214,202,.9); border-radius: var(--radius); box-shadow: var(--shadow); }}
-    .kpi {{ padding: 18px; min-height: 118px; display: flex; flex-direction: column; justify-content: space-between; }}
-    .kpi .label {{ color: var(--muted); font-size: 13px; }}
-    .kpi .value {{ font-size: 36px; line-height: 1; letter-spacing: -.05em; font-weight: 820; }}
-    .kpi.hot .value {{ color: var(--danger); }}
-    .kpi.good .value {{ color: var(--ok); }}
+    .app-page {{ padding: 32px 20px 56px; }}
+    .app-container {{ max-width: var(--container); margin: 0 auto; }}
 
-    .main {{ grid-template-columns: 390px 1fr; align-items: start; }}
-    .panel {{ padding: 20px; }}
-    .panel h2 {{ margin: 0 0 16px; font-size: 18px; letter-spacing: -.02em; }}
-    .stack {{ display: grid; gap: 10px; }}
-    .bar-row {{ display: grid; grid-template-columns: 142px 1fr 36px; gap: 10px; align-items: center; font-size: 13px; color: var(--muted); }}
-    .bar {{ height: 10px; background: #ebe4d8; border-radius: 999px; overflow: hidden; }}
-    .fill {{ height: 100%; border-radius: inherit; background: var(--accent); }}
-    .fill.a {{ background: var(--danger); }} .fill.b {{ background: var(--accent-2); }} .fill.c {{ background: var(--accent); }} .fill.d {{ background: #89827a; }}
-    .chips {{ display: flex; flex-wrap: wrap; gap: 8px; }}
-    .chip {{ border: 1px solid var(--line); background: rgba(255,255,255,.65); padding: 8px 10px; border-radius: 999px; font-size: 12px; color: var(--muted); }}
-    .chip strong {{ color: var(--ink); }}
-
-    .toolbar {{ position: sticky; top: 0; z-index: 4; backdrop-filter: blur(18px); background: rgba(245,242,236,.78); border: 1px solid rgba(222,214,202,.85); border-radius: var(--radius); padding: 12px; margin-bottom: 16px; display: grid; grid-template-columns: 1.35fr repeat(3, minmax(140px, .6fr)); gap: 10px; }}
-    input, select {{ width: 100%; min-height: 44px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-2); color: var(--ink); padding: 0 12px; font: 500 14px/1 var(--sans); outline: none; }}
-    input:focus, select:focus {{ border-color: var(--accent); box-shadow: 0 0 0 4px rgba(37,87,214,.12); }}
-
-    .list {{ display: grid; gap: 12px; }}
-    .opp {{ background: rgba(255,255,255,.82); border: 1px solid var(--line); border-radius: 20px; padding: 16px; display: grid; grid-template-columns: 74px 1fr auto; gap: 16px; align-items: start; }}
-    .score {{ width: 58px; height: 58px; border-radius: 18px; display: grid; place-items: center; background: #f1eee8; font-weight: 850; font-size: 20px; letter-spacing: -.04em; }}
-    .opp.a .score {{ background: rgba(192,54,44,.12); color: var(--danger); }}
-    .opp.b .score {{ background: rgba(255,176,0,.18); color: #8a5d00; }}
-    .opp.c .score {{ background: rgba(37,87,214,.11); color: var(--accent); }}
-    .opp h3 {{ margin: 0; font-size: 17px; line-height: 1.25; letter-spacing: -.02em; }}
-    .opp h3 a {{ text-decoration: none; }}
-    .opp h3 a:hover {{ text-decoration: underline; }}
-    .tags {{ display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }}
-    .tag {{ font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 5px 7px; background: #fff; }}
-    .details {{ color: var(--muted); font-size: 13px; display: grid; gap: 5px; }}
-    .proof-row {{ display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }}
-    .proof-value {{ color: var(--muted); }}
-    .external-link-icon {{ display: inline-grid; place-items: center; width: 19px; height: 19px; color: var(--ink); text-decoration: none; border-radius: 5px; vertical-align: -4px; flex: 0 0 auto; }}
-    .external-link-icon:hover {{ color: var(--accent); background: rgba(37,87,214,.10); }}
-    .external-link-icon svg {{ width: 16px; height: 16px; stroke: currentColor; stroke-width: 2.8; fill: none; stroke-linecap: round; stroke-linejoin: round; }}
-    .right {{ display: grid; gap: 8px; justify-items: end; min-width: 150px; }}
-    .priority {{ font: 800 11px/1 var(--mono); text-transform: uppercase; padding: 8px 9px; border-radius: 999px; background: #f0ebe2; color: var(--muted); }}
-    .priority.a {{ color: var(--danger); background: rgba(192,54,44,.10); }}
-    .priority.b {{ color: #8a5d00; background: rgba(255,176,0,.20); }}
-    .priority.c {{ color: var(--accent); background: rgba(37,87,214,.10); }}
-    .open {{ text-decoration: none; border: 1px solid var(--ink); border-radius: 999px; padding: 9px 12px; font-weight: 760; font-size: 13px; background: var(--ink); color: white; }}
-    .empty {{ padding: 44px; text-align: center; color: var(--muted); }}
-    .footnote {{ margin-top: 16px; color: var(--muted); font-size: 12px; }}
-
-    @media (max-width: 1100px) {{
-      .kpis {{ grid-template-columns: repeat(3, 1fr); }}
-      .main {{ grid-template-columns: 1fr; }}
-      .toolbar {{ grid-template-columns: 1fr 1fr; }}
-      header {{ grid-template-columns: 1fr; }}
-      .meta {{ text-align: left; }}
+    /* ── Hero ─────────────────────────────────────────── */
+    .hero-card {{
+      position: relative; overflow: hidden;
+      display: flex; justify-content: space-between; align-items: flex-end; gap: 24px;
+      padding: 34px; border-radius: 32px;
+      background: var(--surface); box-shadow: var(--shadow-card); border: 1px solid var(--border);
     }}
-    @media (max-width: 700px) {{
-      .shell {{ padding: 22px 14px 40px; }}
-      .kpis {{ grid-template-columns: repeat(2, 1fr); }}
-      .toolbar {{ grid-template-columns: 1fr; }}
-      .opp {{ grid-template-columns: 1fr; }}
-      .score {{ width: auto; height: auto; padding: 10px; justify-self: start; }}
-      .right {{ justify-items: start; }}
+    .hero-card::before {{
+      content: ""; position: absolute; right: 190px; top: 26px; width: 230px; height: 120px;
+      background-image: radial-gradient(rgba(0, 42, 152, 0.15) 1.5px, transparent 1.5px);
+      background-size: 16px 16px; opacity: .5; z-index: 0; pointer-events: none;
+    }}
+    .hero-card::after {{
+      content: ""; position: absolute; right: -80px; top: -70px; width: 260px; height: 190px;
+      border-radius: 48% 52% 62% 38%; background: rgba(15, 192, 224, 0.18); z-index: 0; pointer-events: none;
+    }}
+    .hero-main, .hero-meta {{ position: relative; z-index: 1; min-width: 0; }}
+    .brand {{ display: inline-flex; align-items: center; gap: 12px; margin-bottom: 22px; }}
+    .brand-mark {{
+      display: grid; place-items: center; width: 46px; height: 46px; border-radius: 13px;
+      background: var(--ac-blue); color: #fff; font-weight: 800; font-size: 17px; letter-spacing: .02em;
+      box-shadow: inset -6px -8px 0 rgba(15, 192, 224, .35);
+    }}
+    .brand-name {{ font-size: 12px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--ac-ink); }}
+    .eyebrow {{ margin: 0 0 8px; color: var(--ac-blue); font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }}
+    .display-title {{
+      font-family: "Playfair Display", Georgia, serif; font-weight: 800; letter-spacing: -.03em;
+      margin: 0; color: var(--ac-blue); font-size: clamp(38px, 6vw, 72px); line-height: 1.02;
+    }}
+    .hero-subtitle {{ max-width: 690px; margin: 16px 0 0; color: rgba(20, 24, 31, 0.72); font-size: 15px; line-height: 1.65; }}
+    .hero-meta {{ flex: 0 0 auto; color: rgba(20, 24, 31, 0.62); font-size: 13px; white-space: nowrap; }}
+    .hero-meta strong {{ color: var(--ac-ink); font-weight: 700; }}
+
+    /* ── KPI strip ────────────────────────────────────── */
+    .kpi-grid {{ display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; margin: 20px 0; }}
+    .kpi-card {{
+      padding: 18px; border-radius: var(--radius-md);
+      background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-soft);
+    }}
+    .kpi-label {{ color: rgba(20, 24, 31, 0.64); font-size: 12px; font-weight: 700; }}
+    .kpi-value {{ margin-top: 10px; color: var(--ac-blue); font-size: 34px; line-height: 1; font-weight: 800; }}
+    .kpi-value.danger {{ color: var(--priority-high); }}
+    .kpi-value.cyan {{ color: var(--ac-cyan); }}
+    .kpi-value.secondary {{ color: var(--ac-blue-secondary); }}
+    .kpi-help {{ margin-top: 6px; color: rgba(20, 24, 31, 0.5); font-size: 11px; font-weight: 600; }}
+
+    /* ── Toolbar ──────────────────────────────────────── */
+    .toolbar {{
+      position: sticky; top: 12px; z-index: 4;
+      display: grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 170px) minmax(0, 190px) minmax(0, 170px) auto; gap: 10px;
+      padding: 12px; border-radius: 22px; margin-bottom: 20px;
+      background: rgba(255, 255, 255, 0.74); border: 1px solid var(--border);
+      box-shadow: var(--shadow-soft); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    }}
+    .toolbar input, .toolbar select {{
+      min-width: 0; width: 100%; height: 44px; border-radius: 14px; border: 1px solid var(--border);
+      padding: 0 14px; background: #fff; color: var(--ac-ink); font: inherit; font-size: 14px; outline: none;
+    }}
+    .toolbar input:focus, .toolbar select:focus {{ border-color: var(--ac-blue-light); box-shadow: 0 0 0 4px rgba(0, 42, 152, 0.08); }}
+    .reset-button {{
+      height: 44px; padding: 0 16px; border-radius: 14px; border: 1px solid var(--border);
+      background: var(--surface-soft); color: var(--ac-blue-secondary); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+    }}
+    .reset-button:hover {{ border-color: var(--border-strong); background: var(--ac-soft-bg); }}
+
+    /* ── Content grid ─────────────────────────────────── */
+    .content-grid {{ display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }}
+
+    .opportunity-list {{ display: flex; flex-direction: column; gap: 14px; }}
+    .opportunity-card {{
+      display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 18px; align-items: center;
+      padding: 20px; border-radius: 22px;
+      background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-soft);
+    }}
+    .score-badge {{
+      display: grid; place-items: center; width: 56px; height: 56px; border-radius: 16px;
+      font-size: 19px; font-weight: 800; background: var(--ac-soft-bg); color: var(--ac-blue-secondary);
+    }}
+    .score-high {{ background: var(--priority-high-bg); color: var(--priority-high); }}
+    .score-interesting {{ background: var(--priority-interesting-bg); color: #8A5D00; }}
+    .score-watch {{ background: var(--priority-watch-bg); color: var(--priority-watch); }}
+
+    .opportunity-body {{ min-width: 0; }}
+    .opportunity-head {{ display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }}
+    .opportunity-head h2 {{
+      margin: 0; color: var(--ac-ink); font-size: 16px; line-height: 1.35; font-weight: 800; overflow-wrap: anywhere;
+    }}
+    .opportunity-head h2 a {{ text-decoration: none; }}
+    .opportunity-head h2 a:hover {{ text-decoration: underline; text-decoration-color: var(--ac-blue-light); }}
+
+    .tag-row {{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }}
+    .tag {{
+      display: inline-flex; align-items: center; height: 24px; padding: 0 9px; border-radius: var(--radius-sm);
+      background: var(--surface-soft); border: 1px solid var(--border); color: rgba(20, 24, 31, 0.68);
+      font-size: 11px; font-weight: 600;
+    }}
+
+    .priority-badge {{
+      flex: 0 0 auto; display: inline-flex; align-items: center; height: 28px; padding: 0 10px;
+      border-radius: var(--radius-sm); font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
+    }}
+    .priority-high {{ color: var(--priority-high); background: var(--priority-high-bg); }}
+    .priority-watch {{ color: var(--priority-watch); background: var(--priority-watch-bg); }}
+    .priority-interesting {{ color: #8A5D00; background: var(--priority-interesting-bg); }}
+
+    .meta-line, .description {{ margin: 8px 0 0; color: rgba(20, 24, 31, 0.68); font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }}
+    .meta-line strong, .description strong {{ color: rgba(20, 24, 31, 0.86); }}
+    .clamp-2 {{ display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }}
+    .proof-row {{ display: inline; }}
+    .external-link-icon {{
+      display: inline-grid; place-items: center; width: 19px; height: 19px; color: var(--ac-blue-secondary);
+      text-decoration: none; border-radius: 5px; vertical-align: -4px; margin-left: 4px;
+    }}
+    .external-link-icon:hover {{ color: var(--ac-blue); background: rgba(0, 42, 152, 0.08); }}
+    .external-link-icon svg {{ width: 15px; height: 15px; stroke: currentColor; stroke-width: 2.8; fill: none; stroke-linecap: round; stroke-linejoin: round; }}
+
+    .open-button {{
+      display: inline-flex; align-items: center; justify-content: center; height: 38px; padding: 0 18px;
+      border-radius: var(--radius-sm); background: var(--ac-blue); color: #fff; text-decoration: none;
+      font-size: 13px; font-weight: 800;
+    }}
+    .open-button:hover {{ background: #001F75; }}
+
+    .empty-state {{
+      padding: 48px 24px; text-align: center; color: rgba(20, 24, 31, 0.6); font-size: 14px; line-height: 1.6;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 22px; box-shadow: var(--shadow-soft);
+    }}
+
+    /* ── Insight panel ────────────────────────────────── */
+    .insight-panel {{ position: sticky; top: 84px; display: flex; flex-direction: column; gap: 14px; }}
+    .insight-card {{ padding: 18px; border-radius: 22px; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-soft); }}
+    .insight-card h3 {{ margin: 0 0 14px; color: var(--ac-blue); font-size: 15px; font-weight: 800; }}
+    .stack {{ display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }}
+    .bar-row {{ display: grid; grid-template-columns: minmax(0, 1fr) 32px; gap: 8px; align-items: center; font-size: 12px; color: rgba(20, 24, 31, 0.68); }}
+    .bar-row strong {{ text-align: right; color: var(--ac-ink); }}
+    .bar-label {{ display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; font-weight: 600; }}
+    .bar {{ height: 8px; background: var(--ac-soft-bg); border-radius: 999px; overflow: hidden; }}
+    .fill {{ height: 100%; border-radius: inherit; background: var(--ac-blue-light); }}
+    .fill.a {{ background: var(--priority-high); }}
+    .fill.b {{ background: var(--priority-interesting); }}
+    .fill.c {{ background: var(--ac-blue-secondary); }}
+    .chips {{ display: flex; flex-wrap: wrap; gap: 6px; }}
+    .chip {{
+      border: 1px solid var(--border); background: var(--surface-soft); padding: 6px 10px; border-radius: var(--radius-sm);
+      font: inherit; font-size: 11px; font-weight: 600; color: rgba(20, 24, 31, 0.68); cursor: pointer;
+    }}
+    .chip:hover {{ border-color: var(--border-strong); color: var(--ac-blue); }}
+    .chip strong {{ color: var(--ac-blue); }}
+    .method-note {{ margin: 0; color: rgba(20, 24, 31, 0.62); font-size: 12px; line-height: 1.55; }}
+
+    .footer-note {{ margin-top: 20px; color: rgba(20, 24, 31, 0.56); font-size: 12px; line-height: 1.5; }}
+
+    /* ── Responsive ───────────────────────────────────── */
+    @media (max-width: 1100px) {{
+      .kpi-grid {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }}
+      .toolbar {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+    }}
+    @media (max-width: 920px) {{
+      .content-grid {{ grid-template-columns: minmax(0, 1fr); }}
+      .insight-panel {{ position: static; }}
+      .hero-card {{ flex-direction: column; align-items: flex-start; }}
+      .hero-meta {{ white-space: normal; }}
+      .hero-card::before {{ display: none; }}
+    }}
+    @media (max-width: 640px) {{
+      .app-page {{ padding: 20px 12px 40px; }}
+      .hero-card {{ padding: 26px 20px; border-radius: 26px; }}
+      .kpi-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+      .toolbar {{ grid-template-columns: minmax(0, 1fr); position: static; }}
+      .opportunity-card {{ grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 18px 16px; }}
+      .score-badge {{ width: 48px; height: 48px; font-size: 17px; }}
+      .opportunity-head {{ flex-direction: column-reverse; gap: 8px; }}
+      .open-button {{ width: 100%; }}
     }}
   </style>
 </head>
 <body>
-  <div class="shell">
-    <header>
-      <div>
-        <div class="eyebrow">Ambition Campus · radar financements</div>
-        <h1>Vue d’ensemble sourcing</h1>
-        <p class="subtitle">Un cockpit local pour trier vite les appels à projets, subventions, fondations et dispositifs utiles à l’asso.</p>
-      </div>
-      <div class="meta">
-        Généré le <strong id="generatedAt"></strong>
-        <code id="csvPath"></code>
-      </div>
-    </header>
+  <div class="app-page">
+    <div class="app-container">
 
-    <section class="grid kpis" id="kpis"></section>
-
-    <main class="grid main">
-      <aside class="grid">
-        <section class="card panel">
-          <h2>Répartition priorité</h2>
-          <div class="stack" id="priorityBars"></div>
-        </section>
-        <section class="card panel">
-          <h2>Sources les plus actives</h2>
-          <div class="stack" id="sourceBars"></div>
-        </section>
-        <section class="card panel">
-          <h2>Thèmes détectés</h2>
-          <div class="chips" id="themeChips"></div>
-        </section>
-        <p class="footnote">Note : le score sert à prioriser, pas à décider. La deadline et l’éligibilité doivent être vérifiées sur la page officielle.</p>
-      </aside>
-
-      <section>
-        <div class="toolbar">
-          <input id="search" type="search" placeholder="Chercher : mentorat, Paris, étudiants, FSE…" />
-          <select id="priorityFilter"><option value="">Toutes priorités</option></select>
-          <select id="sourceFilter"><option value="">Toutes sources</option></select>
-          <select id="themeFilter"><option value="">Tous thèmes</option></select>
+      <header class="hero-card">
+        <div class="hero-main">
+          <div class="brand" aria-hidden="true">
+            <span class="brand-mark">AC</span>
+            <span class="brand-name">Ambition Campus</span>
+          </div>
+          <p class="eyebrow">Ambition Campus · Radar financements</p>
+          <h1 class="display-title">Vue d’ensemble sourcing</h1>
+          <p class="hero-subtitle">Un tableau de bord de veille automatisée des appels à projets, subventions, fondations et autres opportunités utiles à l’association.</p>
         </div>
-        <div class="list" id="list"></div>
-      </section>
-    </main>
+        <div class="hero-meta">Dernière mise à jour : <strong id="generatedAt"></strong></div>
+      </header>
+
+      <section class="kpi-grid" id="kpis" aria-label="Indicateurs clés"></section>
+
+      <div class="toolbar" role="search">
+        <input id="search" type="search" placeholder="Rechercher : mentorat, Paris, étudiants, FSE…" aria-label="Rechercher une opportunité" />
+        <select id="priorityFilter" aria-label="Filtrer par priorité"><option value="">Toutes priorités</option></select>
+        <select id="sourceFilter" aria-label="Filtrer par source"><option value="">Toutes sources</option></select>
+        <select id="themeFilter" aria-label="Filtrer par thème"><option value="">Tous thèmes</option></select>
+        <button class="reset-button" id="resetFilters" type="button">Réinitialiser</button>
+      </div>
+
+      <div class="content-grid">
+        <main class="opportunity-list" id="list"></main>
+
+        <aside class="insight-panel">
+          <section class="insight-card">
+            <h3>Répartition priorité</h3>
+            <div class="stack" id="priorityBars"></div>
+          </section>
+          <section class="insight-card">
+            <h3>Sources les plus actives</h3>
+            <div class="stack" id="sourceBars"></div>
+          </section>
+          <section class="insight-card">
+            <h3>Thèmes détectés</h3>
+            <div class="chips" id="themeChips"></div>
+          </section>
+          <section class="insight-card">
+            <h3>Note méthodologique</h3>
+            <p class="method-note">Le score sert à prioriser, pas à décider. La deadline et l’éligibilité doivent être vérifiées sur la page officielle.</p>
+          </section>
+        </aside>
+      </div>
+
+      <p class="footer-note">Dashboard généré automatiquement par la veille Ambition Campus.</p>
+    </div>
   </div>
 
   <script>
@@ -878,7 +1011,12 @@ def html_doc(rows: list[dict[str, Any]], summary: dict) -> str:
     const summary = DATA.summary;
 
     const $ = (id) => document.getElementById(id);
-    const priorityClass = (p) => p.startsWith('A') ? 'a' : p.startsWith('B') ? 'b' : p.startsWith('C') ? 'c' : 'd';
+    const priorityCode = (p) => {{
+      const s = String(p || '').toLowerCase();
+      if (s.startsWith('a') || s.includes('traiter')) return 'high';
+      if (s.startsWith('c') || s.includes('veille')) return 'watch';
+      return 'interesting';
+    }};
     const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
     const encodeTextFragment = (s) => encodeURIComponent(s).replace(/[!'()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
     const pct = (n, d) => d ? Math.round((n / d) * 100) : 0;
@@ -917,25 +1055,30 @@ def html_doc(rows: list[dict[str, Any]], summary: dict) -> str:
       const b = summary.priority['B - intéressant'] || 0;
       const c = summary.priority['C - veille'] || 0;
       $('kpis').innerHTML = [
-        ['Total', summary.total, ''],
-        ['À traiter vite', a, 'hot'],
-        ['Intéressants', b, ''],
-        ['Veille', c, ''],
-        ['Avec deadline', summary.with_deadline, 'good'],
-        ['Score moyen', summary.avg_score, ''],
-      ].map(([label, value, cls]) => `<article class="card kpi ${{cls}}"><div class="label">${{label}}</div><div class="value">${{value}}</div></article>`).join('');
+        ['Total', summary.total, 'opportunités', ''],
+        ['À traiter vite', a, 'priorité haute', 'danger'],
+        ['Intéressants', b, 'à qualifier', ''],
+        ['Veille', c, 'surveillance', 'secondary'],
+        ['Avec deadline', summary.with_deadline, 'à venir', 'cyan'],
+        ['Score moyen', summary.avg_score, 'qualité / 100', ''],
+      ].map(([label, value, help, tone]) => `<article class="kpi-card"><div class="kpi-label">${{label}}</div><div class="kpi-value ${{tone}}">${{value}}</div><div class="kpi-help">${{help}}</div></article>`).join('');
     }}
 
     function barRow(label, value, max, cls='') {{
-      return `<div class="bar-row"><span title="${{esc(label)}}">${{esc(label.length > 24 ? label.slice(0, 24) + '…' : label)}}</span><div class="bar"><div class="fill ${{cls}}" style="width:${{pct(value, max)}}%"></div></div><strong>${{value}}</strong></div>`;
+      return `<div><span class="bar-label" title="${{esc(label)}}">${{esc(label)}}</span><div class="bar-row"><div class="bar"><div class="fill ${{cls}}" style="width:${{pct(value, max)}}%"></div></div><strong>${{value}}</strong></div></div>`;
     }}
     function renderSidebars() {{
+      const prClass = (label) => {{
+        const code = priorityCode(label);
+        return code === 'high' ? 'a' : code === 'interesting' ? 'b' : 'c';
+      }};
       const prEntries = Object.entries(summary.priority);
       const maxPr = Math.max(1, ...prEntries.map(x => x[1]));
-      $('priorityBars').innerHTML = prEntries.map(([label, value]) => barRow(label, value, maxPr, priorityClass(label))).join('');
-      const maxSource = Math.max(1, ...summary.sources.map(x => x[1]));
-      $('sourceBars').innerHTML = summary.sources.map(([label, value]) => barRow(label, value, maxSource)).join('');
-      $('themeChips').innerHTML = summary.themes.map(([label, value]) => `<button class="chip" data-theme="${{esc(label)}}"><strong>${{value}}</strong> ${{esc(label)}}</button>`).join('');
+      $('priorityBars').innerHTML = prEntries.map(([label, value]) => barRow(label, value, maxPr, prClass(label))).join('');
+      const sources = summary.sources.slice(0, 7);
+      const maxSource = Math.max(1, ...sources.map(x => x[1]));
+      $('sourceBars').innerHTML = sources.map(([label, value]) => barRow(label, value, maxSource)).join('');
+      $('themeChips').innerHTML = summary.themes.map(([label, value]) => `<button type="button" class="chip" data-theme="${{esc(label)}}"><strong>${{value}}</strong>&nbsp;${{esc(label)}}</button>`).join('');
       document.querySelectorAll('[data-theme]').forEach(btn => btn.addEventListener('click', () => {{ $('themeFilter').value = btn.dataset.theme; renderList(); }}));
     }}
 
@@ -950,43 +1093,49 @@ def html_doc(rows: list[dict[str, Any]], summary: dict) -> str:
       }}).sort((a,b) => (b.score_num || 0) - (a.score_num || 0));
 
       $('list').innerHTML = filtered.length ? filtered.map(r => {{
-        const cls = priorityClass(r.priorite || '');
+        const code = priorityCode(r.priorite);
         const tags = [r.zone, r.type_financement, ...(r.themes_list || []).slice(0,4)].filter(Boolean);
-        const deadline = r.deadline_date ? `<div><strong>Deadline :</strong> ${{esc(r.deadline_date)}}</div>` : (r.deadline ? `<div><strong>Deadline :</strong> ${{esc(r.deadline)}}</div>` : '');
+        const deadlineText = r.deadline_date || r.deadline || '';
+        const metaLine = `<p class="meta-line"><strong>Source :</strong> ${{esc(r.organisme)}}${{deadlineText ? ` · <strong>Deadline :</strong> ${{esc(deadlineText)}}` : ''}}</p>`;
         const statusHref = r.deadline_href || deadlineHref(r);
-        const deadlineStatus = r.deadline_status ? `<div class="proof-row"><strong>Statut deadline :</strong> <span class="proof-value">${{esc(r.deadline_status)}}</span>${{externalIcon(statusHref, 'Ouvrir le passage source surligné')}}</div>` : '';
+        const deadlineStatus = r.deadline_status ? `<p class="description clamp-2"><span class="proof-row"><strong>Statut deadline :</strong> ${{esc(r.deadline_status)}}${{externalIcon(statusHref, 'Ouvrir le passage source surligné')}}</span></p>` : '';
         const amountText = r.amount_possible || 'Non indiqué dans la source';
         const amount = r.amount_found && r.amount_href
-          ? `<div class="proof-row"><strong>Montant possible :</strong> <span class="proof-value">${{esc(amountText)}}</span>${{externalIcon(r.amount_href, 'Ouvrir le montant dans la source')}}</div>`
-          : `<div><strong>Montant possible :</strong> ${{esc(amountText)}}</div>`;
-        return `<article class="opp ${{cls}}">
-          <div class="score">${{esc(r.score)}}</div>
-          <div>
-            <h3><a href="${{esc(r.lien)}}" target="_blank" rel="noreferrer">${{esc(r.titre)}}</a></h3>
-            <div class="tags">${{tags.map(t => `<span class="tag">${{esc(t)}}</span>`).join('')}}</div>
-            <div class="details">
-              <div><strong>Source :</strong> ${{esc(r.organisme)}}</div>
-              ${{deadline}}${{deadlineStatus}}${{amount}}
-              <div><strong>Action :</strong> ${{esc(r.prochaine_action)}}</div>
+          ? `<p class="description clamp-2"><span class="proof-row"><strong>Montant possible :</strong> ${{esc(amountText)}}${{externalIcon(r.amount_href, 'Ouvrir le montant dans la source')}}</span></p>`
+          : `<p class="description clamp-2"><strong>Montant possible :</strong> ${{esc(amountText)}}</p>`;
+        const action = r.prochaine_action ? `<p class="description clamp-2"><strong>Action :</strong> ${{esc(r.prochaine_action)}}</p>` : '';
+        return `<article class="opportunity-card">
+          <div class="score-badge score-${{code}}" title="Score ${{esc(r.score)}}">${{esc(r.score)}}</div>
+          <div class="opportunity-body">
+            <div class="opportunity-head">
+              <h2><a href="${{esc(r.lien)}}" target="_blank" rel="noreferrer">${{esc(r.titre)}}</a></h2>
+              <span class="priority-badge priority-${{code}}">${{esc(r.priorite)}}</span>
             </div>
+            <div class="tag-row">${{tags.map(t => `<span class="tag">${{esc(t)}}</span>`).join('')}}</div>
+            ${{metaLine}}${{deadlineStatus}}${{amount}}${{action}}
           </div>
-          <div class="right">
-            <span class="priority ${{cls}}">${{esc(r.priorite)}}</span>
-            <a class="open" href="${{esc(r.lien)}}" target="_blank" rel="noreferrer">Ouvrir</a>
-          </div>
+          <a class="open-button" href="${{esc(r.lien)}}" target="_blank" rel="noreferrer">Ouvrir</a>
         </article>`;
-      }}).join('') : '<div class="card empty">Aucun résultat avec ces filtres.</div>';
+      }}).join('') : `<div class="empty-state">Aucune opportunité ne correspond à ces filtres.<br>Essaie d’élargir ta recherche ou de réinitialiser les filtres.</div>`;
+    }}
+
+    function resetFilters() {{
+      $('search').value = '';
+      $('priorityFilter').value = '';
+      $('sourceFilter').value = '';
+      $('themeFilter').value = '';
+      renderList();
     }}
 
     function init() {{
       $('generatedAt').textContent = summary.generated_at;
-      $('csvPath').textContent = summary.csv_path;
       renderKpis();
       renderSidebars();
       addOptions('priorityFilter', unique('priorite'));
       addOptions('sourceFilter', unique('organisme'));
       addOptions('themeFilter', uniqueThemes());
       ['search','priorityFilter','sourceFilter','themeFilter'].forEach(id => $(id).addEventListener('input', renderList));
+      $('resetFilters').addEventListener('click', resetFilters);
       renderList();
     }}
     init();
