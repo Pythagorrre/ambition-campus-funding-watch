@@ -489,12 +489,24 @@ def is_expired_status(status: str) -> bool:
 
 def fetch_search_page(url: str, timeout: int = 6) -> str:
     req = Request(url, headers={"User-Agent": SEARCH_USER_AGENT, "Accept": "text/html,application/xhtml+xml"})
-    with urlopen(req, timeout=timeout) as response:
-        raw = response.read(600_000)
-        content_type = response.headers.get("Content-Type", "")
-        charset_match = re.search(r"charset=([\w.-]+)", content_type, re.I)
-        charset = charset_match.group(1) if charset_match else "utf-8"
-        return raw.decode(charset, "replace")
+    # Même fallback SSL que fetch() : les environnements sans magasin de
+    # certificats (Python macOS) échouent sinon systématiquement.
+    last_error: Exception | None = None
+    for context in (None, ssl._create_unverified_context()):
+        try:
+            with urlopen(req, timeout=timeout, context=context) as response:
+                raw = response.read(600_000)
+                content_type = response.headers.get("Content-Type", "")
+                charset_match = re.search(r"charset=([\w.-]+)", content_type, re.I)
+                charset = charset_match.group(1) if charset_match else "utf-8"
+                return raw.decode(charset, "replace")
+        except ssl.SSLError as exc:
+            last_error = exc
+        except URLError as exc:
+            last_error = exc
+            if not isinstance(exc.reason, ssl.SSLError):
+                raise
+    raise last_error if last_error else URLError("fetch failed")
 
 
 def unwrap_search_url(href: str) -> str:

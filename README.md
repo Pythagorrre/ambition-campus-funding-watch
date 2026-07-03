@@ -91,6 +91,21 @@ Corps : copier le contenu de `outputs/YYYY-MM-DD_digest.md`.
 
 Quand Google/Gmail sera reconnecté, on pourra envoyer automatiquement ce digest par mail et/ou append les lignes dans Sheets.
 
+## Découverte automatique de nouvelles sources
+
+Chaque semaine, `scripts/discover_sources.py` lance des requêtes web larges
+(« appel à projets égalité des chances 2026 », etc.), repère les domaines
+pertinents absents de `config/sources.csv` et les propose dans
+`config/sources_candidates.csv` :
+
+- `statut = à valider` : nouveau domaine détecté, à examiner.
+- Passer le statut à `ajoutée` après l'avoir intégré dans `sources.csv`
+  (avec la bonne URL de page « appels à projets » du site).
+- Passer le statut à `ignorer` pour ne plus jamais re-proposer ce domaine.
+
+Le fichier est cumulatif et trié par nombre d'occurrences ; il est commité
+automatiquement par le workflow hebdo.
+
 ## Sources initiales
 
 Priorité haute :
@@ -102,6 +117,14 @@ Priorité haute :
 - Fondation Groupe RATP
 - Jeunes.gouv
 - Erasmus+ / Corps européen de solidarité
+
+Agrégateurs (veille de second niveau — eux crawlent, on les lit) :
+
+- Carenews — appels à projets multi-fondations
+- Avise — actualités ESS
+- Admical — mécénat d'entreprise
+- INJEP — jeunesse / éducation populaire
+- Fondations Orange et EDF
 
 À enrichir ensuite :
 
