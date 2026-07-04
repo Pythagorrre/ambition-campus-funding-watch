@@ -709,6 +709,9 @@ def build_summary(rows: list[dict[str, Any]], csv_path: Path | str) -> dict:
     }
 
 
+AC_LOGO_SVG = """<svg class="brand-logo" role="img" aria-label="Ambition Campus" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 217.14 44.68"><defs><style>.aclogo-1{fill:#2e3192;}.aclogo-2{fill:none;stroke:#2e3192;stroke-miterlimit:10;}</style></defs><title>Ambition Campus</title><g id="Calque_2" data-name="Calque 2"><g id="Calque_1-2" data-name="Calque 1"><path class="aclogo-1" d="M33.81,16.76,24.6.51a1,1,0,0,0-1.73,0L11.5,19.81.14,39.13A1,1,0,0,0,1,40.64l2.68,0a1,1,0,0,0,.87-.49l9-15.32L23.69,7.62l8.87,15.66c0-.24,0-.47,0-.71A19.42,19.42,0,0,1,33.81,16.76Z"/><path class="aclogo-2" d="M29.66,29.37,24.1,19.44a.5.5,0,0,0-.86,0l-5.82,9.78L11.61,39a.49.49,0,0,0,.42.75l11.38.15L34.78,40a.51.51,0,0,0,.45-.75Z"/><path d="M71.17,31.27H64.38a1,1,0,0,0-.81.43A12,12,0,1,1,62.05,16a1,1,0,0,0,.68.28h7.48a1,1,0,0,0,.87-1.51,20,20,0,1,0,1,18A1,1,0,0,0,71.17,31.27Z"/><path class="aclogo-1" d="M88.71,28H85.13l-.68,1.65H82.62l3.44-7.7h1.76l3.44,7.7H89.39Zm-.56-1.35-1.22-2.95L85.7,26.61Z"/><path class="aclogo-1" d="M100.72,29.61V25L98.44,28.8h-.8l-2.26-3.71v4.52H93.71v-7.7h1.48l2.88,4.79,2.84-4.79h1.46l0,7.7Z"/><path class="aclogo-1" d="M112.56,26.31a1.89,1.89,0,0,1,.37,1.2,1.78,1.78,0,0,1-.79,1.56,4,4,0,0,1-2.29.54h-4v-7.7h3.76a3.66,3.66,0,0,1,2.16.54,1.71,1.71,0,0,1,.75,1.46,1.91,1.91,0,0,1-.27,1,1.8,1.8,0,0,1-.75.69A2,2,0,0,1,112.56,26.31Zm-4.92-3.06v1.82h1.77a1.83,1.83,0,0,0,1-.23.77.77,0,0,0,.34-.68.75.75,0,0,0-.34-.68,1.83,1.83,0,0,0-1-.23ZM110.78,28a.79.79,0,0,0,.36-.72c0-.63-.48-.95-1.42-.95h-2.08v1.9h2.08A2,2,0,0,0,110.78,28Z"/><path class="aclogo-1" d="M115.93,21.91h1.78v7.7h-1.78Z"/><path class="aclogo-1" d="M122.79,23.36h-2.47V21.91H127v1.45h-2.46v6.25h-1.78Z"/><path class="aclogo-1" d="M129.64,21.91h1.78v7.7h-1.78Z"/><path class="aclogo-1" d="M136.46,29.23a3.93,3.93,0,0,1,0-6.93,4.46,4.46,0,0,1,2.17-.52,4.39,4.39,0,0,1,2.15.52,3.9,3.9,0,0,1,1.51,1.42,4,4,0,0,1,.55,2,3.86,3.86,0,0,1-2.06,3.47,4.49,4.49,0,0,1-2.15.51A4.57,4.57,0,0,1,136.46,29.23Zm3.4-1.32a2.32,2.32,0,0,0,.86-.87,2.58,2.58,0,0,0,.31-1.28,2.54,2.54,0,0,0-.31-1.27,2.27,2.27,0,0,0-.86-.88,2.62,2.62,0,0,0-2.47,0,2.27,2.27,0,0,0-.86.88,2.54,2.54,0,0,0-.31,1.27,2.58,2.58,0,0,0,.31,1.28,2.32,2.32,0,0,0,.86.87,2.54,2.54,0,0,0,2.47,0Z"/><path class="aclogo-1" d="M152.89,21.91v7.7h-1.46l-3.84-4.67v4.67h-1.76v-7.7h1.47l3.83,4.68V21.91Z"/><path d="M162.52,29.17a3.73,3.73,0,0,1-1.44-1.4,4.14,4.14,0,0,1,0-4,3.75,3.75,0,0,1,1.45-1.4,4.56,4.56,0,0,1,3.65-.22,3.29,3.29,0,0,1,1.23.84l-.51.51a3.13,3.13,0,0,0-2.28-.91A3.33,3.33,0,0,0,163,23a3.05,3.05,0,0,0-1.17,1.14,3.3,3.3,0,0,0,0,3.26A3,3,0,0,0,163,28.53a3.33,3.33,0,0,0,1.66.42A3.07,3.07,0,0,0,166.9,28l.51.52a3.54,3.54,0,0,1-1.23.84,4.36,4.36,0,0,1-1.59.29A4.21,4.21,0,0,1,162.52,29.17Z"/><path d="M175.43,27.56h-4.29l-.92,2.05h-.85l3.52-7.7h.8l3.52,7.7h-.86Zm-.3-.67-1.84-4.13-1.85,4.13Z"/><path d="M188.14,21.91v7.7h-.79V23.45l-3,5.18h-.39l-3-5.15v6.13h-.78v-7.7h.67l3.34,5.71,3.32-5.71Z"/><path d="M197.49,22.62a2.66,2.66,0,0,1,0,3.86,3.48,3.48,0,0,1-2.31.7h-2.07v2.43h-.82v-7.7h2.89A3.49,3.49,0,0,1,197.49,22.62ZM196.9,26a2,2,0,0,0,0-2.85,2.63,2.63,0,0,0-1.75-.5h-2v3.85h2A2.68,2.68,0,0,0,196.9,26Z"/><path d="M202.56,28.82a3.42,3.42,0,0,1-.84-2.5V21.91h.81v4.38a2.9,2.9,0,0,0,.61,2,2.66,2.66,0,0,0,3.51,0,2.9,2.9,0,0,0,.6-2V21.91h.8v4.41a3.46,3.46,0,0,1-.83,2.5,3.59,3.59,0,0,1-4.66,0Z"/><path d="M212.63,29.4a3,3,0,0,1-1.22-.72l.32-.63a3.17,3.17,0,0,0,1.11.68,4.1,4.1,0,0,0,1.43.25,2.63,2.63,0,0,0,1.55-.37,1.18,1.18,0,0,0,.52-1,1,1,0,0,0-.28-.74,2,2,0,0,0-.69-.42,9.5,9.5,0,0,0-1.13-.32,11.93,11.93,0,0,1-1.39-.43,2.18,2.18,0,0,1-.88-.62A1.64,1.64,0,0,1,211.6,24a1.88,1.88,0,0,1,.31-1.06,2.09,2.09,0,0,1,.94-.77,3.94,3.94,0,0,1,1.59-.28,4.67,4.67,0,0,1,1.29.18,3.65,3.65,0,0,1,1.09.5l-.27.65a3.71,3.71,0,0,0-1-.48,3.77,3.77,0,0,0-1.08-.16,2.5,2.5,0,0,0-1.53.39,1.22,1.22,0,0,0-.51,1,1,1,0,0,0,.28.74,1.81,1.81,0,0,0,.71.43c.28.1.66.2,1.13.32a11.94,11.94,0,0,1,1.37.41,2.34,2.34,0,0,1,.89.62,1.66,1.66,0,0,1,.36,1.12,1.88,1.88,0,0,1-.31,1.06,2.13,2.13,0,0,1-1,.76,4.2,4.2,0,0,1-1.6.28A4.75,4.75,0,0,1,212.63,29.4Z"/></g></g></svg>"""
+
+
 def json_for_html(obj) -> str:
     return json.dumps(obj, ensure_ascii=False).replace("</", "<\\/")
 
@@ -792,13 +795,7 @@ def html_doc(rows: list[dict[str, Any]], summary: dict) -> str:
       border-radius: 48% 52% 62% 38%; background: rgba(15, 192, 224, 0.18); z-index: 0; pointer-events: none;
     }}
     .hero-main, .hero-meta {{ position: relative; z-index: 1; min-width: 0; }}
-    .brand {{ display: inline-flex; align-items: center; gap: 12px; margin-bottom: 22px; }}
-    .brand-mark {{
-      display: grid; place-items: center; width: 46px; height: 46px; border-radius: 13px;
-      background: var(--ac-blue); color: #fff; font-weight: 800; font-size: 17px; letter-spacing: .02em;
-      box-shadow: inset -6px -8px 0 rgba(15, 192, 224, .35);
-    }}
-    .brand-name {{ font-size: 12px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--ac-ink); }}
+    .brand-logo {{ display: block; height: 42px; width: auto; margin-bottom: 24px; }}
     .eyebrow {{ margin: 0 0 8px; color: var(--ac-blue); font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }}
     .display-title {{
       font-family: "Playfair Display", Georgia, serif; font-weight: 800; letter-spacing: -.03em;
@@ -942,6 +939,7 @@ def html_doc(rows: list[dict[str, Any]], summary: dict) -> str:
     @media (max-width: 640px) {{
       .app-page {{ padding: 20px 12px 40px; }}
       .hero-card {{ padding: 26px 20px; border-radius: 26px; }}
+      .brand-logo {{ height: 34px; }}
       .kpi-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
       .toolbar {{ grid-template-columns: minmax(0, 1fr); position: static; }}
       .opportunity-card {{ grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 18px 16px; }}
@@ -957,10 +955,7 @@ def html_doc(rows: list[dict[str, Any]], summary: dict) -> str:
 
       <header class="hero-card">
         <div class="hero-main">
-          <div class="brand" aria-hidden="true">
-            <span class="brand-mark">AC</span>
-            <span class="brand-name">Ambition Campus</span>
-          </div>
+          {AC_LOGO_SVG}
           <p class="eyebrow">Ambition Campus · Radar financements</p>
           <h1 class="display-title">Vue d’ensemble sourcing</h1>
           <p class="hero-subtitle">Un tableau de bord de veille automatisée des appels à projets, subventions, fondations et autres opportunités utiles à l’association.</p>
