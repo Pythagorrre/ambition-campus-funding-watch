@@ -117,6 +117,10 @@ def fetch_page_html(url: str, timeout: int = 7) -> str:
             with urlopen(req, timeout=timeout, context=context) as response:
                 raw = response.read(1_500_000)
                 content_type = response.headers.get("Content-Type", "")
+                # PDF / binaire : inutilisable en extraction texte (sinon on affiche
+                # du charabia « %PDF-1.6 %obj endobj » dans les montants).
+                if raw[:5] == b"%PDF-" or (content_type and not re.search(r"html|xml|text/plain", content_type, re.I)):
+                    return ""
                 charset_match = re.search(r"charset=([\w.-]+)", content_type, re.I)
                 charset = charset_match.group(1) if charset_match else "utf-8"
                 return raw.decode(charset, "replace")
@@ -488,6 +492,8 @@ def extract_amount_from_text(text: str) -> tuple[str, int, int] | None:
         sentence_start = sentence_end
 
     # Fallback: find a money/percentage value surrounded by amount vocabulary.
+    if "\ufffd" in text[:400] or re.search(r"%PDF-|/FlateDecode|\bendobj\b", text[:4000]):
+        return None
     for money in MONEY_RE.finditer(text):
         start = max(0, money.start() - 220)
         end = min(len(text), money.end() + 240)
@@ -502,6 +508,8 @@ def extract_amount_from_text(text: str) -> tuple[str, int, int] | None:
             if prev_space >= 0:
                 end = prev_space
         context = text[start:end]
+        if "\ufffd" in context:
+            continue
         score = amount_score(context, labelled=False)
         if score <= 0:
             continue
@@ -1089,7 +1097,7 @@ def html_doc(rows: list[dict[str, Any]], summary: dict) -> str:
         const code = priorityCode(r.priorite);
         const tags = [r.zone, r.type_financement, ...(r.themes_list || []).slice(0,4)].filter(Boolean);
         const deadlineText = r.deadline_date || r.deadline || '';
-        const metaLine = `<p class="meta-line"><strong>Source :</strong> ${{esc(r.organisme)}}${{deadlineText ? ` · <strong>Deadline :</strong> ${{esc(deadlineText)}}` : ''}}</p>`;
+        const metaLine = `<p class="meta-line"><strong>Source :</strong> ${{esc(r.organisme)}}</p>${{deadlineText ? `<p class="meta-line"><strong>Deadline :</strong> ${{esc(deadlineText)}}</p>` : ''}}`;
         const statusHref = r.deadline_href || deadlineHref(r);
         const deadlineStatus = r.deadline_status ? `<p class="description clamp-2"><span class="proof-row"><strong>Statut deadline :</strong> ${{esc(r.deadline_status)}}${{externalIcon(statusHref, 'Ouvrir le passage source surligné')}}</span></p>` : '';
         const amountText = r.amount_possible || 'Non indiqué dans la source';
