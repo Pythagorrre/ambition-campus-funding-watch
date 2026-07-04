@@ -796,7 +796,6 @@ def html_doc(rows: list[dict[str, Any]], summary: dict) -> str:
     }}
     .hero-main, .hero-meta {{ position: relative; z-index: 1; min-width: 0; }}
     .brand-logo {{ display: block; height: 42px; width: auto; margin-bottom: 24px; }}
-    .eyebrow {{ margin: 0 0 8px; color: var(--ac-blue); font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }}
     .display-title {{
       font-family: "Playfair Display", Georgia, serif; font-weight: 800; letter-spacing: -.03em;
       margin: 0; color: var(--ac-blue); font-size: clamp(38px, 6vw, 72px); line-height: 1.02;
@@ -956,7 +955,6 @@ def html_doc(rows: list[dict[str, Any]], summary: dict) -> str:
       <header class="hero-card">
         <div class="hero-main">
           {AC_LOGO_SVG}
-          <p class="eyebrow">Ambition Campus · Radar financements</p>
           <h1 class="display-title">Vue d’ensemble sourcing</h1>
           <p class="hero-subtitle">Un tableau de bord de veille automatisée des appels à projets, subventions, fondations et autres opportunités utiles à l’association.</p>
         </div>
@@ -1050,12 +1048,12 @@ def html_doc(rows: list[dict[str, Any]], summary: dict) -> str:
       const b = summary.priority['B - intéressant'] || 0;
       const c = summary.priority['C - veille'] || 0;
       $('kpis').innerHTML = [
-        ['Total', summary.total, 'opportunités', ''],
-        ['À traiter vite', a, 'priorité haute', 'danger'],
-        ['Intéressants', b, 'à qualifier', ''],
-        ['Veille', c, 'surveillance', 'secondary'],
-        ['Avec deadline', summary.with_deadline, 'à venir', 'cyan'],
-        ['Score moyen', summary.avg_score, 'qualité / 100', ''],
+        ['Opportunités ouvertes', summary.total, 'financements repérés, non expirés', ''],
+        ['À traiter vite', a, 'priorité A — les plus pertinentes', 'danger'],
+        ['À étudier', b, 'priorité B — à qualifier', ''],
+        ['À garder à l’œil', c, 'priorité C — sans urgence', 'secondary'],
+        ['Date limite connue', summary.with_deadline, 'opportunités avec une échéance identifiée', 'cyan'],
+        ['Score moyen', summary.avg_score, 'pertinence estimée, sur 100', ''],
       ].map(([label, value, help, tone]) => `<article class="kpi-card"><div class="kpi-label">${{label}}</div><div class="kpi-value ${{tone}}">${{value}}</div><div class="kpi-help">${{help}}</div></article>`).join('');
     }}
 
