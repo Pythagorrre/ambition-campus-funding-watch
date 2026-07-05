@@ -82,9 +82,12 @@ Colonnes clés :
 ## Newsletter hebdomadaire automatique
 
 Chaque vendredi à 19h (heure de Paris, été), le workflow `newsletter.yml`
-génère un mail HTML avec les opportunités détectées ces 7 derniers jours
-(`scripts/build_newsletter.py`), l'archive dans `outputs/newsletters/`
-et l'envoie aux destinataires configurés.
+lance d'abord un scraping frais + régénère le dashboard (pour que le mail et
+le tableau de bord soient à jour ensemble le vendredi), puis génère un mail
+HTML léger listant les opportunités détectées ces 7 derniers jours
+(`scripts/build_newsletter.py`, une ligne par appel, puce colorée par
+priorité), l'archive dans `outputs/newsletters/` et l'envoie aux destinataires
+configurés.
 
 L'envoi nécessite 5 secrets dans le repo GitHub
 (Settings → Secrets and variables → Actions → New repository secret) :

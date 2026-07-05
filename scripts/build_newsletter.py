@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Newsletter hebdo : les opportunités détectées ces N derniers jours.
 
-Produit outputs/newsletters/YYYY-MM-DD_newsletter.html (corps de mail HTML,
-styles inline) + .txt (fallback texte) et écrit le sujet dans $GITHUB_OUTPUT
-si disponible (clé `subject`), sinon sur stdout.
+Format léger : liste groupée par priorité, une ligne par appel
+(titre en noir cliquable + « deadline le JJ/MM/AAAA » en gris), puce colorée
+selon la priorité (rouge = à traiter vite, ambre = à étudier, bleu = à surveiller).
+
+Produit outputs/newsletters/YYYY-MM-DD_newsletter.html (corps de mail) + .txt,
+et écrit subject / html_path / count dans $GITHUB_OUTPUT si disponible.
 
 Usage:
-    python3 scripts/build_newsletter.py
     python3 scripts/build_newsletter.py --days 7
 """
 
@@ -16,6 +18,7 @@ import argparse
 import csv
 import html
 import os
+import re
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -23,11 +26,43 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = BASE_DIR / "outputs"
 NEWSLETTER_DIR = OUTPUT_DIR / "newsletters"
 
-PRIORITY_LABELS = {
-    "A": "🔥 Priorité A — à traiter vite",
-    "B": "⭐ Priorité B — à étudier",
-    "C": "👀 Priorité C — à surveiller",
+DASHBOARD_URL = "https://pythagorrre.github.io/ambition-campus-funding-watch/"
+
+# label + couleur de puce par catégorie de priorité
+CATEGORIES = {
+    "A": ("À traiter vite", "#EE2129"),
+    "B": ("À étudier", "#D99A00"),
+    "C": ("À garder à l'œil", "#31559B"),
 }
+
+
+def priority_code(priorite: str) -> str:
+    s = (priorite or "").lower()
+    if s.startswith("a") or "traiter" in s:
+        return "A"
+    if s.startswith("c") or "veille" in s:
+        return "C"
+    return "B"
+
+
+def clean_title(t: str) -> str:
+    t = (t or "").strip()
+    t = re.sub(r"\s*[|\-–·]\s*$", "", t)  # séparateur en fin de titre
+    # dédup d'un nom d'organisme répété en fin de titre
+    for n in (4, 3, 2):
+        w = t.split()
+        if len(w) >= 2 * n and w[-n:] == w[-2 * n:-n]:
+            t = " ".join(w[:-n]).rstrip(" -–|·")
+    return t.strip()
+
+
+def fr_date(iso: str) -> str:
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", iso or "")
+    return f"{m.group(3)}/{m.group(2)}/{m.group(1)}" if m else (iso or "")
+
+
+def esc(s) -> str:
+    return html.escape(str(s or ""))
 
 
 def recent_rows(days: int) -> list[dict[str, str]]:
@@ -39,64 +74,71 @@ def recent_rows(days: int) -> list[dict[str, str]]:
                 key = (row.get("lien") or "").strip() or f"{row.get('titre', '')}|{row.get('organisme', '')}"
                 merged[key] = row
     rows = [r for r in merged.values() if (r.get("date_detection") or "") >= cutoff]
-    rows.sort(key=lambda r: (r.get("priorite") or "Z", -int(float(r.get("score") or 0))))
+    rows.sort(key=lambda r: ({"A": 0, "B": 1, "C": 2}[priority_code(r.get("priorite"))],
+                             -int(float(r.get("score") or 0))))
     return rows
 
 
-def item_html(row: dict[str, str]) -> str:
-    titre = html.escape(row.get("titre") or "Sans titre")
-    lien = html.escape(row.get("lien") or "#")
-    organisme = html.escape(row.get("organisme") or "")
-    deadline = html.escape(row.get("deadline_date") or row.get("deadline") or "non précisée")
-    montant = html.escape(row.get("montant") or "")
-    bits = [f"<a href=\"{lien}\" style=\"color:#1a5fb4;font-weight:600;text-decoration:none\">{titre}</a>"]
-    meta = [organisme, f"deadline : {deadline}"]
-    if montant:
-        meta.append(f"montant : {montant}")
-    bits.append(f"<div style=\"color:#555;font-size:13px;margin-top:2px\">{' · '.join(m for m in meta if m)}</div>")
-    return "<li style=\"margin:0 0 12px 0\">" + "".join(bits) + "</li>"
+def row_html(r: dict[str, str], color: str) -> str:
+    titre = esc(clean_title(r.get("titre")) or "Sans titre")
+    lien = esc(r.get("lien") or "#")
+    dl = r.get("deadline_date") or ""
+    deadline = f' <span style="color:#999;">· deadline le {fr_date(dl)}</span>' if dl else ""
+    return (
+        '<tr>'
+        f'<td style="width:16px;vertical-align:top;padding:3px 8px 3px 0;color:{color};font-size:15px;line-height:1.5;">●</td>'
+        f'<td style="padding:3px 0;font-size:14px;line-height:1.5;">'
+        f'<a href="{lien}" style="color:#1a1a1a;text-decoration:none;">{titre}</a>{deadline}</td>'
+        '</tr>'
+    )
 
 
 def build(days: int) -> tuple[str, str, str, int]:
     rows = recent_rows(days)
     today = date.today()
-    subject = f"Veille financements Ambition Campus — {len(rows)} nouveauté(s) au {today.strftime('%d/%m/%Y')}"
+    subject = f"Veille financements Ambition Campus : {len(rows)} nouvelles opportunités ({today.strftime('%d/%m/%Y')})"
 
-    sections_html: list[str] = []
-    sections_txt: list[str] = []
-    for prio in ("A", "B", "C"):
-        group = [r for r in rows if (r.get("priorite") or "").upper().startswith(prio)]
-        if not group:
+    html_parts: list[str] = []
+    txt_parts: list[str] = []
+    for code in ("A", "B", "C"):
+        grp = [r for r in rows if priority_code(r.get("priorite")) == code]
+        if not grp:
             continue
-        sections_html.append(f"<h2 style=\"font-size:16px;margin:24px 0 8px\">{PRIORITY_LABELS[prio]} ({len(group)})</h2>")
-        sections_html.append("<ul style=\"padding-left:18px;margin:0\">" + "".join(item_html(r) for r in group) + "</ul>")
-        sections_txt.append(f"\n{PRIORITY_LABELS[prio]} ({len(group)})\n")
-        for r in group:
-            deadline = r.get("deadline_date") or r.get("deadline") or "non précisée"
-            sections_txt.append(f"- {r.get('titre')}\n  {r.get('organisme')} · deadline : {deadline}\n  {r.get('lien')}")
-
-    other = [r for r in rows if not (r.get("priorite") or "").upper()[:1] in ("A", "B", "C")]
-    if other:
-        sections_html.append(f"<h2 style=\"font-size:16px;margin:24px 0 8px\">Autres ({len(other)})</h2>")
-        sections_html.append("<ul style=\"padding-left:18px;margin:0\">" + "".join(item_html(r) for r in other) + "</ul>")
+        label, color = CATEGORIES[code]
+        html_parts.append(
+            f'<h2 style="font-size:14px;font-weight:700;margin:22px 0 6px;color:#555;'
+            f'text-transform:uppercase;letter-spacing:.03em;">{label} ({len(grp)})</h2>'
+        )
+        html_parts.append(
+            '<table role="presentation" cellpadding="0" cellspacing="0" width="100%">'
+            + "".join(row_html(r, color) for r in grp)
+            + '</table>'
+        )
+        txt_parts.append(f"\n{label} ({len(grp)})")
+        for r in grp:
+            dl = r.get("deadline_date") or ""
+            suffix = f" (deadline le {fr_date(dl)})" if dl else ""
+            txt_parts.append(f"- {clean_title(r.get('titre'))}{suffix}\n  {r.get('lien')}")
 
     if not rows:
         empty = "Aucune nouvelle opportunité détectée cette semaine."
-        sections_html.append(f"<p>{empty}</p>")
-        sections_txt.append(empty)
+        html_parts.append(f'<p style="color:#555;">{empty}</p>')
+        txt_parts.append(empty)
 
-    dashboard_url = "https://pythagorrre.github.io/ambition-campus-funding-watch/"
-    body_html = f"""<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:640px;margin:0 auto;color:#222">
-<h1 style="font-size:20px">Veille financements — nouveautés des {days} derniers jours</h1>
-<p style="color:#555">Semaine du {today.strftime('%d/%m/%Y')} · {len(rows)} nouvelle(s) opportunité(s)</p>
-{''.join(sections_html)}
-<p style="margin-top:28px"><a href="{dashboard_url}" style="color:#1a5fb4">→ Voir toutes les opportunités ouvertes sur le tableau de bord</a></p>
-<p style="color:#999;font-size:12px">Newsletter automatique de la veille Ambition Campus.</p>
+    body_html = f"""<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:640px;margin:0 auto;color:#333;font-size:14px;line-height:1.5;">
+<h1 style="font-size:19px;margin:0 0 4px;color:#002A98;font-weight:700;">Veille financements Ambition Campus</h1>
+<p style="color:#777;margin:0 0 4px;">Semaine du {today.strftime('%d/%m/%Y')} · {len(rows)} nouvelles opportunités</p>
+{''.join(html_parts)}
+<p style="margin:24px 0 0;"><a href="{DASHBOARD_URL}" style="color:#33507a;">→ Voir le détail sur le tableau de bord</a></p>
+<p style="color:#aaa;font-size:12px;margin-top:14px;">Le score sert à prioriser, pas à décider : deadline et éligibilité à vérifier sur la page officielle. Newsletter automatique de la veille Ambition Campus.</p>
 </div>"""
-    body_txt = (f"Veille financements — nouveautés des {days} derniers jours\n"
-                f"Semaine du {today.strftime('%d/%m/%Y')} · {len(rows)} nouvelle(s) opportunité(s)\n"
-                + "\n".join(sections_txt)
-                + f"\n\nTableau de bord : {dashboard_url}\n")
+
+    body_txt = (
+        f"Veille financements Ambition Campus\n"
+        f"Semaine du {today.strftime('%d/%m/%Y')} · {len(rows)} nouvelles opportunités\n"
+        + "\n".join(txt_parts)
+        + f"\n\nTableau de bord : {DASHBOARD_URL}\n"
+    )
     return subject, body_html, body_txt, len(rows)
 
 

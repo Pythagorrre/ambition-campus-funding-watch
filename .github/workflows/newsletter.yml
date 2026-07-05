@@ -21,16 +21,34 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Scraping frais juste avant l'envoi : la newsletter et le dashboard
+      # reflètent les mêmes données à jour du vendredi (évite la désynchro
+      # avec le run du lundi).
+      - name: Lancer la veille
+        run: python3 scripts/funding_watch.py --mark-seen --min-score 18 --max-detail 250
+
+      - name: Découverte de nouvelles sources (non bloquant)
+        run: python3 scripts/discover_sources.py || echo "Découverte en échec — on continue."
+
+      - name: Générer le dashboard
+        run: python3 scripts/build_dashboard.py
+
       - id: build
         name: Générer la newsletter (nouveautés des 7 derniers jours)
         run: python3 scripts/build_newsletter.py --days 7
 
-      - name: Archiver la newsletter
+      - name: Publier veille, dashboard et newsletter
         run: |
           git config user.name "veille-bot"
           git config user.email "veille-bot@users.noreply.github.com"
-          git add outputs/newsletters/
-          git diff --cached --quiet || { git commit -m "Newsletter du $(date -u +%Y-%m-%d)"; git push; }
+          git add outputs/ dashboard/ data/ config/
+          if git diff --cached --quiet; then
+            echo "Aucun changement à publier."
+          else
+            git commit -m "Veille + newsletter du $(date -u +%Y-%m-%d)"
+            git pull --rebase --autostash origin main
+            git push
+          fi
 
       - name: Envoyer par mail
         if: env.SMTP_USERNAME != ''
