@@ -60,7 +60,7 @@ jobs:
           password: ${{ secrets.SMTP_PASSWORD }}
           subject: ${{ steps.build.outputs.subject }}
           to: ${{ secrets.MAIL_TO }}
-          from: Veille Ambition Campus <${{ secrets.SMTP_USERNAME }}>
+          from: Veille Ambition Campus <${{ secrets.MAIL_FROM }}>
           html_body: file://${{ steps.build.outputs.html_path }}
 
       - name: SMTP non configuré
