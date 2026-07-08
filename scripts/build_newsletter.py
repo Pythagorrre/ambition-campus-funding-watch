@@ -26,7 +26,7 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = BASE_DIR / "outputs"
 NEWSLETTER_DIR = OUTPUT_DIR / "newsletters"
 
-DASHBOARD_URL = "https://pythagorrre.github.io/ambition-campus-funding-watch/"
+DASHBOARD_URL = "https://ambition-campus-funding-watch.pages.dev/"
 
 # label + couleur de puce par catégorie de priorité
 CATEGORIES = {
