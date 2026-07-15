@@ -50,8 +50,13 @@ jobs:
             git push
           fi
 
+      # Pas de nouvel appel cette semaine -> on n'envoie pas de mail.
+      - name: Rien de neuf, pas d'envoi
+        if: steps.build.outputs.count == '0'
+        run: echo "0 nouvelle opportunité cette semaine — aucun mail envoyé."
+
       - name: Envoyer par mail
-        if: env.SMTP_USERNAME != ''
+        if: env.SMTP_USERNAME != '' && steps.build.outputs.count != '0'
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: ${{ secrets.SMTP_SERVER }}
@@ -64,5 +69,5 @@ jobs:
           html_body: file://${{ steps.build.outputs.html_path }}
 
       - name: SMTP non configuré
-        if: env.SMTP_USERNAME == ''
+        if: env.SMTP_USERNAME == '' && steps.build.outputs.count != '0'
         run: echo "Secrets SMTP absents — newsletter générée et archivée dans outputs/newsletters/, mais non envoyée. Voir le README pour configurer l'envoi."
