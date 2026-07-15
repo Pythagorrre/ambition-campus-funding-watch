@@ -10,6 +10,15 @@
 // est servi via Cloudflare Pages.
 export async function onRequest(context) {
   const { request, env, next } = context;
+
+  // Ressources publiques (ex. logo utilisé dans la newsletter) : accessibles
+  // sans mot de passe, pour qu'elles s'affichent dans les emails, y compris
+  // après un transfert.
+  const path = new URL(request.url).pathname;
+  if (path === "/email-logo.png" || path.startsWith("/public/")) {
+    return next();
+  }
+
   const expected = env.SITE_PASSWORD;
 
   // Sécurité : si aucun mot de passe n'est configuré, on laisse passer
