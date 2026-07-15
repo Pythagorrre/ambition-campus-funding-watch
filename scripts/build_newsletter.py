@@ -12,7 +12,10 @@ le workflow n'envoie pas de mail (condition sur le compteur `count`).
 Deux numéros distincts :
 - numéro de SEMAINE (basé sur la date, 1 → 47) affiché dans la bulle bleue ;
 - numéro d'ÉDITION (persistant, incrémenté seulement sur un envoi réel) pour
-  l'objet et la rotation des citations.
+  l'objet.
+
+La citation tourne au CALENDRIER (une par semaine, bascule le vendredi) via
+scripts/quotes.py, partagé avec le dashboard — les deux restent synchro.
 
 Écrit subject / html_path / count dans $GITHUB_OUTPUT si disponible.
 """
@@ -26,6 +29,9 @@ import os
 import re
 from datetime import date, timedelta
 from pathlib import Path
+
+# Citations hebdomadaires partagées avec le dashboard.
+from quotes import quote_for_date
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = BASE_DIR / "outputs"
@@ -51,30 +57,6 @@ CATEGORIES = {
     "C": ("Priorité 3", "À garder à l'œil", "#8EA7D4"),
 }
 
-# Citations tournantes (dans l'ordre, une par édition, cycle après la 21e).
-QUOTES = [
-    "Dans ces dossiers de subvention, il y a des futurs ingénieurs, avocates, fondateurs, députés, astronautes. Ils ne le savent pas encore.",
-    "On ne lève pas des fonds. On lève des plafonds.",
-    "Chaque budget obtenu devient un atelier, une masterclass, un mentorat, une visite de campus puis une vie qui change de trajectoire.",
-    "Chaque dossier gagné aujourd'hui, c'est des lycéens qui reviendront en bénévoles demain.",
-    "Chaque dossier rempli aujourd'hui profite à une génération qui remplira ceux de la suivante.",
-    "Chaque dossier gagné plante une graine. On ne verra pas l'arbre, et ceux qui s'abriteront sous son ombre ne sauront pas qui l'a plantée.",
-    "Le financement dure un an. La trajectoire qu'il déclenche dure toute une vie.",
-    "Aucun placement ne rapporte autant qu'un élève qui découvre qu'il en est capable.",
-    "Un financement, c'est du carburant. La fusée, c'est eux.",
-    "Un formulaire de ces appels fait 12 pages. La trajectoire qu'il finance fera soixante ans.",
-    "Un budget accordé, c'est une porte qui s'ouvre. Un élève qui la franchit, c'est une génération qui suit.",
-    "Les financeurs voient un projet. Nous, on voit les visages de ceux qu'il va toucher.",
-    "Une subvention se compte en euros. Son effet se compte en déclics.",
-    "Il suffit d'une rencontre pour changer un parcours. Notre travail, c'est de financer la rencontre.",
-    "La confiance en soi ne tombe pas du ciel. Elle s'organise, elle s'accompagne, et elle se finance.",
-    "Le potentiel existe déjà. Le financement ne le crée pas. Il le libère.",
-    "On ne fabrique pas des talents. On finance les conditions pour qu'ils se révèlent.",
-    "Le financeur signe un chèque. Le bénévole donne son samedi. L'élève change de vie.",
-    "On ne verra pas tout de suite ce que ce financement a changé. Rendez-vous dans dix ans, à la remise des diplômes.",
-    "Les intérêts composés existent aussi en éducation. Un déclic à 17 ans rapporte toute une vie.",
-    "L'impact d'un mentor ne s'arrête pas au mentoré. Il touche ses frères, ses sœurs, ses amis, son quartier.",
-]
 
 # <head> + styles (repris du modèle validé) + verrou "mode clair" (anti-inversion
 # en mode sombre sur mobile). Chaîne simple : les accolades CSS ne sont pas interpolées.
@@ -207,7 +189,7 @@ def build(days: int, edition: int) -> tuple[str, str, str, int]:
     count = len(rows)
     today = date.today()
     week = week_number(today)
-    quote = QUOTES[(edition - 1) % len(QUOTES)]
+    quote = quote_for_date(today)
     sections = "".join(_section(rows, c) for c in ("A", "B", "C"))
     subject = f"Newsletter #{edition} - AAP Ambition Campus"
     preheader = f"{count} nouvel{'s' if count > 1 else ''} appel{'s' if count > 1 else ''} à projets détecté{'s' if count > 1 else ''} cette semaine."

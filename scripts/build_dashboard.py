@@ -23,6 +23,11 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = BASE_DIR / "outputs"
 DASHBOARD_DIR = BASE_DIR / "dashboard"
 
+# Citations hebdomadaires partagées avec la newsletter (rotation le vendredi).
+# La liste et l'ancre sont injectées dans le JS du dashboard : la bascule se
+# fait côté navigateur, le bon jour, même sans régénération du site.
+from quotes import QUOTES, ROTATION_ANCHOR
+
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126 Safari/537.36"
 MONTHS_FR = [
     "janvier", "février", "mars", "avril", "mai", "juin",
@@ -729,6 +734,9 @@ def json_for_html(obj) -> str:
 
 def html_doc(rows: list[dict[str, Any]], summary: dict) -> str:
     data_json = json_for_html({"rows": rows, "summary": summary})
+    quotes_json = json_for_html(QUOTES)
+    # new Date(an, mois 0-indexé, jour) = minuit heure locale du visiteur.
+    quote_anchor_js = f"new Date({ROTATION_ANCHOR.year}, {ROTATION_ANCHOR.month - 1}, {ROTATION_ANCHOR.day})"
     return f"""<!doctype html>
 <html lang="fr">
 <head>
@@ -814,6 +822,12 @@ def html_doc(rows: list[dict[str, Any]], summary: dict) -> str:
       margin: 0; color: var(--ac-blue); font-size: clamp(38px, 6vw, 72px); line-height: 1.02;
     }}
     .hero-subtitle {{ max-width: 690px; margin: 16px 0 0; color: rgba(20, 24, 31, 0.72); font-size: 15px; line-height: 1.65; }}
+    .hero-quote {{
+      max-width: 690px; margin: 18px 0 0; padding-left: 16px;
+      border-left: 3px solid var(--ac-cyan);
+      font-family: "Playfair Display", Georgia, serif; font-style: italic;
+      font-size: 16px; line-height: 1.6; color: rgba(20, 24, 31, 0.68);
+    }}
     .hero-meta {{ flex: 0 0 auto; color: rgba(20, 24, 31, 0.62); font-size: 13px; white-space: nowrap; }}
     .hero-meta strong {{ color: var(--ac-ink); font-weight: 700; }}
 
@@ -970,6 +984,7 @@ def html_doc(rows: list[dict[str, Any]], summary: dict) -> str:
           {AC_LOGO_SVG}
           <h1 class="display-title">Vue d’ensemble sourcing</h1>
           <p class="hero-subtitle">Un tableau de bord de veille automatisée des appels à projets, subventions, fondations et autres opportunités utiles à l’association.</p>
+          <p class="hero-quote">«&nbsp;<span id="weeklyQuote"></span>&nbsp;»</p>
         </div>
         <div class="hero-meta">Dernière mise à jour : <strong id="generatedAt"></strong></div>
       </header>
@@ -1015,6 +1030,19 @@ def html_doc(rows: list[dict[str, Any]], summary: dict) -> str:
     const DATA = {data_json};
     const rows = DATA.rows;
     const summary = DATA.summary;
+
+    // Citation de la semaine — même liste et même règle que la newsletter
+    // (scripts/quotes.py) : la #1 court jusqu'au jeudi 23/07/2026, puis
+    // bascule chaque vendredi (jour d'envoi de la newsletter).
+    const QUOTES = {quotes_json};
+    const QUOTE_ANCHOR = {quote_anchor_js};
+    function weeklyQuote() {{
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      if (today < QUOTE_ANCHOR) return QUOTES[0];
+      const days = Math.round((today - QUOTE_ANCHOR) / 864e5);
+      return QUOTES[(Math.floor(days / 7) + 1) % QUOTES.length];
+    }}
 
     const $ = (id) => document.getElementById(id);
     const priorityCode = (p) => {{
@@ -1135,6 +1163,7 @@ def html_doc(rows: list[dict[str, Any]], summary: dict) -> str:
 
     function init() {{
       $('generatedAt').textContent = summary.generated_at;
+      $('weeklyQuote').textContent = weeklyQuote();
       renderKpis();
       renderSidebars();
       addOptions('priorityFilter', unique('priorite'));
