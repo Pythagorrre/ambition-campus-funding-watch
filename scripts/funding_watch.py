@@ -621,14 +621,41 @@ def update_deadline_from_context(row: "Opportunity", context: str, source_url: s
     row.deadline_date = deadline_iso
     row.deadline_status = deadline_status(deadline_iso, f"{row.titre} {row.lien}", date.today())
     row.deadline_source = source_url
-    note = f"deadline via recherche web ({note_label}): {source_url}"
+    note = f"deadline via {note_label}: {source_url}"
     row.notes = ((row.notes + "; ") if row.notes else "") + note
     row.notes = row.notes[:500]
     return True
 
 
+LISTING_INDEX_SEGMENTS = {
+    "appels_a_projets", "appels-a-projets", "appel-a-projets", "appels-projets",
+    "aides-et-appels-a-projets", "appel-projet", "appels-a-projet",
+}
+
+
+def is_listing_index_url(url: str) -> bool:
+    # Une page d'index (Carenews, iledefrance.fr, etc.) mélange les deadlines de dizaines d'AAP :
+    # une date extraite là-bas appartient presque toujours à un autre appel.
+    path = urlparse(url).path.strip("/").lower()
+    if not path:
+        return True
+    return path.split("/")[-1] in LISTING_INDEX_SEGMENTS
+
+
 def resolve_deadline_with_web(row: "Opportunity", max_results: int = 8) -> bool:
     """Use web search + result fetching to resolve rows still marked 'à vérifier'."""
+    # La page de l'opportunité elle-même est la source la plus fiable : la tenter avant la recherche web.
+    if not is_listing_index_url(row.lien):
+        try:
+            doc, final_url, err = fetch(row.lien, timeout=6)
+        except Exception as exc:
+            doc, final_url, err = "", row.lien, f"{type(exc).__name__}: {exc}"
+        if not err and doc:
+            parser = parse_html(doc)
+            fetched_title = clean_space(" ".join(parser.title_parts))
+            context = f"{fetched_title}\n{row.titre}\n{html_to_text(doc)}"
+            if update_deadline_from_context(row, context, final_url or row.lien, "page de l'opportunité"):
+                return True
     fetched_pages = 0
     max_pages = 5 if row.priorite.startswith("A") else max(1, min(max_results, 2))
     for query in deadline_queries(row):
@@ -637,11 +664,13 @@ def resolve_deadline_with_web(row: "Opportunity", max_results: int = 8) -> bool:
         for result_title, result_url in results:
             if not is_relevant_deadline_result(row, result_title, result_url):
                 continue
-            if update_deadline_from_context(row, result_title, result_url, "titre résultat"):
+            if update_deadline_from_context(row, result_title, result_url, "recherche web (titre résultat)"):
                 return True
         for result_title, result_url in results:
             if fetched_pages >= max_pages:
                 break
+            if is_listing_index_url(result_url):
+                continue
             if not is_relevant_deadline_result(row, result_title, result_url):
                 continue
             fetched_pages += 1
@@ -657,7 +686,7 @@ def resolve_deadline_with_web(row: "Opportunity", max_results: int = 8) -> bool:
             fetched_title = clean_space(" ".join(parser.title_parts)) or result_title
             text = html_to_text(doc)
             context = f"{fetched_title}\n{result_title}\n{text}"
-            if update_deadline_from_context(row, context, final_url or result_url, "page résultat"):
+            if update_deadline_from_context(row, context, final_url or result_url, "recherche web (page résultat)"):
                 return True
     row.deadline_status = "non trouvée après recherche web"
     if row.priorite.startswith(("A", "B")):
@@ -829,7 +858,10 @@ def collect_source(source: dict[str, str], max_links: int, fetch_details: bool) 
         # and would inflate every link.
         focused_detail = (detail_text or page_text[:1200])[:2500]
         combined = f"{detail_title}\n{link_title}\n{focused_detail}"
-        deadline_source = f"{detail_title}\n{link_title}\n{detail_text or page_text}"
+        # Deadline : uniquement depuis la page détail de l'opportunité. Le texte de la page listing
+        # mélange les dates de dizaines d'AAP (cause de fausses deadlines, ex. SG IdF 07/2026) ;
+        # sans détail chargé, on laisse "à vérifier" et la résolution web tranchera.
+        deadline_source = f"{detail_title}\n{link_title}\n{detail_text}"
         score, reasons = score_candidate(combined, source.get("source_type", ""))
         notes = "; ".join(reasons)
         if detail_error:
