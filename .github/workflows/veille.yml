@@ -32,6 +32,14 @@ jobs:
       - name: Générer le dashboard
         run: python3 scripts/build_dashboard.py
 
+      # Pousse les opportunités ouvertes vers le site (table aap).
+      # No-op tant que les secrets SITE_URL / SITE_SYNC_TOKEN ne sont pas définis.
+      - name: Pousser vers le site (non bloquant)
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+          SITE_SYNC_TOKEN: ${{ secrets.SITE_SYNC_TOKEN }}
+        run: python3 scripts/push_to_site.py
+
       # Le push déclenche automatiquement le redéploiement sur Cloudflare Pages
       # (qui héberge le dashboard, protégé par mot de passe).
       - name: Publier les résultats
