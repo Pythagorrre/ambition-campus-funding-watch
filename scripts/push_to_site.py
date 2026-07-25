@@ -15,6 +15,7 @@ Règles d'envoi :
     aux statuts gérés côté site (déposé, écarté…), seulement aux métadonnées.
 """
 import csv
+import datetime
 import json
 import os
 import sys
@@ -24,9 +25,16 @@ from pathlib import Path
 OUTPUTS = Path(__file__).resolve().parent.parent / "outputs"
 
 
-def latest_csv() -> Path | None:
-    files = sorted(OUTPUTS.glob("*_opportunities.csv"))
-    return files[-1] if files else None
+def all_rows() -> dict[str, dict]:
+    """Agrège tous les CSV d'opportunités (chaque fichier est un delta) — dédup par id, le plus récent gagne."""
+    rows: dict[str, dict] = {}
+    for path in sorted(OUTPUTS.glob("*_opportunities.csv")):
+        with open(path, newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                rid = (row.get("id") or "").strip()
+                if rid:
+                    rows[rid] = row
+    return rows
 
 
 def main() -> int:
@@ -36,31 +44,32 @@ def main() -> int:
         print("push_to_site : SITE_URL / SITE_SYNC_TOKEN absents — étape ignorée.")
         return 0
 
-    csv_path = latest_csv()
-    if not csv_path:
+    merged = all_rows()
+    if not merged:
         print("push_to_site : aucun CSV d'opportunités dans outputs/.")
         return 0
 
+    today = datetime.date.today().isoformat()
     opportunities = []
-    with open(csv_path, newline="", encoding="utf-8") as f:
-        for row in csv.DictReader(f):
-            statut = (row.get("statut") or "").strip().lower()
-            deadline_status = (row.get("deadline_status") or "").strip().lower()
-            if statut in ("fermé", "ferme") or deadline_status in ("expiré", "expire"):
-                continue
-            if not (row.get("id") or "").strip():
-                continue
-            opportunities.append({
-                "external_id": row["id"].strip(),
-                "title": (row.get("titre") or "").strip(),
-                "funder": (row.get("organisme") or "").strip(),
-                "deadline": (row.get("deadline_date") or "").strip(),
-                "amount": (row.get("montant") or "").strip(),
-                "url": (row.get("lien") or "").strip(),
-            })
+    for rid, row in merged.items():
+        statut = (row.get("statut") or "").strip().lower()
+        deadline_status = (row.get("deadline_status") or "").strip().lower()
+        if statut in ("fermé", "ferme") or deadline_status in ("expiré", "expire"):
+            continue
+        deadline = (row.get("deadline_date") or "").strip()
+        if deadline and deadline < today:  # échéance passée : inutile côté suivi
+            continue
+        opportunities.append({
+            "external_id": rid,
+            "title": (row.get("titre") or "").strip(),
+            "funder": (row.get("organisme") or "").strip(),
+            "deadline": (row.get("deadline_date") or "").strip(),
+            "amount": (row.get("montant") or "").strip(),
+            "url": (row.get("lien") or "").strip(),
+        })
 
     if not opportunities:
-        print(f"push_to_site : rien d'ouvert à pousser depuis {csv_path.name}.")
+        print("push_to_site : rien d'ouvert à pousser.")
         return 0
 
     req = urllib.request.Request(
@@ -77,8 +86,9 @@ def main() -> int:
         return 0
 
     print(
-        f"push_to_site : {csv_path.name} → {result.get('inserted', 0)} ajoutés, "
-        f"{result.get('updated', 0)} mis à jour, {result.get('skipped', 0)} ignorés."
+        f"push_to_site : {len(opportunities)} ouverts (sur {len(merged)} connus) → "
+        f"{result.get('inserted', 0)} ajoutés, {result.get('updated', 0)} mis à jour, "
+        f"{result.get('skipped', 0)} ignorés."
     )
     return 0
 
