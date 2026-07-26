@@ -75,7 +75,12 @@ def main() -> int:
     req = urllib.request.Request(
         f"{site_url}/api/veille/sync",
         data=json.dumps({"opportunities": opportunities}).encode(),
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+            # Cloudflare bloque l'UA par défaut "Python-urllib" (403) — UA custom obligatoire
+            "User-Agent": "ambition-campus-veille/1.0",
+        },
         method="POST",
     )
     try:
