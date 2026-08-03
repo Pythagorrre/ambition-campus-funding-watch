@@ -120,7 +120,84 @@ NEGATIVE_TERMS = {
     "recrutement": -4,
     "nomination": -4,
     "formation interne": -3,
+    # Ajouts 03/08/2026 après la qualification manuelle (8 hors-thèse passés au travers) :
+    # thématiques hors thèse AC (mentorat lycéens REP/QPV vers le supérieur)
+    "par le sport": -10,
+    "pratique sportive": -6,
+    "club sportif": -5,
+    "agriculture": -10,
+    "agricole": -8,
+    "biodiversité": -8,
+    "biodiversite": -8,
+    "forêts": -6,
+    "recherche médicale": -12,
+    "recherche medicale": -12,
+    "prendre soin": -8,
+    "grand âge": -8,
+    "grand age": -8,
+    "ehpad": -8,
+    "périnatalité": -8,
+    "perinatalite": -8,
+    "numérique inclusif": -6,
+    "inclusion numérique": -6,
+    "hip-hop": -8,
+    "hip hop": -8,
+    "urbanisme": -8,
+    "immobilières": -8,
+    "immobilieres": -8,
+    "droits des femmes": -5,
+    "violences faites aux femmes": -6,
+    "création artistique": -5,
+    "creation artistique": -5,
+    # dispositifs structurellement fermés pour AC
+    "réservé aux membres": -10,
+    "reserve aux membres": -10,
+    "familles rurales": -10,
+    "territoires ruraux": -6,
+    "salarié du groupe": -4,
+    "collaborateur du groupe": -4,
+    "partenaire européen obligatoire": -6,
 }
+
+# Écartage automatique motivé : si le TITRE matche un de ces motifs (et, sauf motif
+# prioritaire, ne contient aucun terme de la thèse AC), la ligne est conservée dans le
+# CSV mais avec statut "écarté auto" + motif — jamais de suppression silencieuse.
+HORS_THESE_TITLE_TERMS = {
+    "par le sport": "projet à médiation sportive (hors thèse AC)",
+    "agriculture": "agriculture (hors thèse AC)",
+    "hip-hop": "culture hip-hop (hors thèse AC)",
+    "hip hop": "culture hip-hop (hors thèse AC)",
+    "recherche médicale": "recherche médicale (hors thèse AC)",
+    "recherche medicale": "recherche médicale (hors thèse AC)",
+    "prendre soin": "santé/autonomie (hors thèse AC)",
+    "urbanisme": "urbanisme (hors thèse AC)",
+    "immobilières": "immobilier (hors thèse AC)",
+    "immobilieres": "immobilier (hors thèse AC)",
+    "biodiversité": "environnement (hors thèse AC)",
+    "biodiversite": "environnement (hors thèse AC)",
+    "droits des femmes": "droits des femmes (hors thèse AC, sauf projet dédié)",
+    "numérique inclusif": "numérique (hors thèse AC)",
+    "familles rurales": "réseau Familles Rurales (AC hors réseau)",
+}
+# Motifs qui l'emportent même si le titre contient un terme de la thèse
+# (ex. "Éducation par le sport" reste du sport).
+HORS_THESE_PRIORITY = {"par le sport", "familles rurales"}
+THESE_TERMS = [
+    "égalité des chances", "egalite des chances", "mentorat", "mentor", "tutorat",
+    "orientation", "éducation", "education", "qpv", "quartiers", "lycée", "lycee",
+    "jeunesse", "réussite", "reussite", "étudiant", "etudiant",
+]
+
+
+def hors_these_motif(title: str) -> str | None:
+    t = title.casefold()
+    for term, motif in HORS_THESE_TITLE_TERMS.items():
+        if term in t:
+            if term in HORS_THESE_PRIORITY:
+                return motif
+            if not any(k in t for k in THESE_TERMS):
+                return motif
+    return None
 
 THEME_RULES = [
     ("égalité des chances", ["egalite des chances", "égalité des chances", "inclusion", "quartiers", "politique de la ville"]),
@@ -873,12 +950,19 @@ def collect_source(source: dict[str, str], max_links: int, fetch_details: bool) 
         typ = find_type(combined)
         elig = "Probable si association loi 1901 éligible; vérifier règlement" if score >= 7 else "À qualifier"
         action = "Lire le règlement + confirmer éligibilité + noter deadline" if score >= 14 else "Surveiller / qualifier rapidement"
+        statut = "nouveau"
+        motif = hors_these_motif(detail_title)
+        if motif:
+            statut = "écarté auto"
+            elig = motif
+            action = "Aucune (écarté automatiquement, vérifier le motif si doute)"
+            notes = (f"Écarté auto le {date.today().isoformat()} : {motif}. " + notes)[:500]
         opportunities.append(Opportunity(
             id=make_id(url),
             date_detection=date.today().isoformat(),
             priorite=priority(score),
             score=score,
-            statut="nouveau",
+            statut=statut,
             titre=detail_title[:220],
             organisme=source["name"],
             type_financement=typ,
